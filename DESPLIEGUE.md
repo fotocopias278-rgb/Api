@@ -53,7 +53,23 @@ Crea una base Redis y copia la URL `rediss://...` (con dos eses: va cifrada).
 3. Copia el valor que Render generó para `API_KEYS`: es la clave con la que se
    autenticará tu aplicación.
 
-Las migraciones se aplican solas al arrancar. Comprueba que vive:
+Las migraciones se aplican solas al arrancar.
+
+### 4. Comprueba que todo funciona
+
+En lugar de ir endpoint por endpoint, el repositorio trae un verificador que
+recorre el camino completo —salud, autenticación, pago, subida del comprobante,
+extracción con IA y conciliación— contra el servicio ya desplegado:
+
+```bash
+make smoke-deploy URL=https://TU-APP.onrender.com API_KEY=la-clave-de-render
+```
+
+Distingue fallos de avisos: si aún no has puesto la clave de IA, marcará la
+extracción como aviso y no como error. Devuelve código 1 si algo está roto de
+verdad, así que sirve para un cron o para la CI de despliegue.
+
+Si prefieres la comprobación mínima:
 
 ```bash
 curl https://TU-APP.onrender.com/api/v1/health/ready

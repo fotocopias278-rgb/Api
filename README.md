@@ -56,6 +56,9 @@ Consulta **[DESPLIEGUE.md](DESPLIEGUE.md)**: guía paso a paso con Render, Neon 
 Upstash (plan gratuito), el `render.yaml` listo para usar y ejemplos en PHP para
 integrar desde otra aplicación.
 
+Una vez desplegado, `make smoke-deploy URL=... API_KEY=...` recorre el camino
+completo contra el servicio real y dice qué funciona y qué no.
+
 Con `RECEIPT_PROCESSING_MODE=inline` la extracción corre dentro del propio
 proceso web y todo cabe en un único servicio, sin worker aparte. Es lo que hace
 viable el plan gratuito; con volumen real, sepáralo en un worker de Celery.
