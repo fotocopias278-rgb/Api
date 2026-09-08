@@ -5,13 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Path, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, Path, UploadFile, status
 
 from app.api.deps import AuthDep, ReceiptServiceDep, SettingsDep
 from app.core.exceptions import ValidationError
 from app.db.models import Payment, Receipt
 from app.schemas.receipt import ReceiptAccepted, ReceiptRead
-from app.workers.tasks import enqueue_receipt_analysis
+from app.workers.tasks import analyze_receipt_inline, enqueue_receipt_analysis
 
 router = APIRouter(prefix="/receipts", tags=["comprobantes"])
 
@@ -32,6 +32,7 @@ def _to_read(receipt: Receipt, payment: Payment | None = None) -> ReceiptRead:
 async def upload_receipt(
     service: ReceiptServiceDep,
     settings: SettingsDep,
+    background: BackgroundTasks,
     _: AuthDep,
     file: Annotated[UploadFile, File(description="Imagen o PDF del comprobante.")],
     payment_reference: Annotated[str | None, Form(max_length=64)] = None,
@@ -52,7 +53,14 @@ async def upload_receipt(
         payment_reference=payment_reference,
     )
 
-    task_id = enqueue_receipt_analysis(receipt.id)
+    if settings.receipt_processing_mode == "inline":
+        # Se ejecuta después de enviar la respuesta: el cliente sigue recibiendo
+        # su 202 sin esperar a la llamada al modelo.
+        background.add_task(analyze_receipt_inline, receipt.id)
+        task_id = None
+    else:
+        task_id = enqueue_receipt_analysis(receipt.id)
+
     return ReceiptAccepted(
         id=receipt.id,
         status=receipt.status,

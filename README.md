@@ -50,6 +50,16 @@ curl http://localhost:8000/api/v1/health
 
 La documentación interactiva queda en <http://localhost:8000/docs>.
 
+### En producción
+
+Consulta **[DESPLIEGUE.md](DESPLIEGUE.md)**: guía paso a paso con Render, Neon y
+Upstash (plan gratuito), el `render.yaml` listo para usar y ejemplos en PHP para
+integrar desde otra aplicación.
+
+Con `RECEIPT_PROCESSING_MODE=inline` la extracción corre dentro del propio
+proceso web y todo cabe en un único servicio, sin worker aparte. Es lo que hace
+viable el plan gratuito; con volumen real, sepáralo en un worker de Celery.
+
 ### En local
 
 ```bash
@@ -231,14 +241,21 @@ por divisa se respeta (JPY sin decimales, KWD con tres).
 ## 🧪 Pruebas
 
 ```bash
-make test                                        # 134 pruebas sobre SQLite
+make test                                        # 150 pruebas sobre SQLite
 make test-pg                                     # las mismas contra PostgreSQL
 make lint
 ```
 
 La batería cubre el motor de reglas, la conversión de importes, la conciliación,
 el ciclo de vida del pago (idempotencia, revisión, devolución), el webhook
-(firma, caducidad, idempotencia) y la limitación de tasa.
+(firma, caducidad, idempotencia), la limitación de tasa y el contrato con la API
+de visión.
+
+Ese último se verifica contra un doble local del endpoint de Messages, así que
+comprueba la forma exacta de la petición sin gastar una llamada. Lo que no puede
+comprobar es si el modelo *lee bien* un comprobante: para eso está
+`make smoke-vision`, que hace una única llamada real (requiere
+`ANTHROPIC_API_KEY`).
 
 La suite corre sobre SQLite por defecto —rápida y sin dependencias— pero
 apuntando `TEST_DATABASE_URL` a un Postgres se ejecuta idéntica contra el motor

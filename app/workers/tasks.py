@@ -50,6 +50,23 @@ async def _analyze(receipt_id: uuid.UUID):
         return await ReceiptService(session).analyze(receipt_id)
 
 
+async def analyze_receipt_inline(receipt_id: uuid.UUID) -> None:
+    """Analiza el comprobante en el propio proceso web, tras responder.
+
+    Alternativa a la cola para despliegues de un solo servicio. Nunca propaga:
+    esto corre después de que la respuesta haya salido, así que una excepción
+    aquí no llegaría al cliente y solo ensuciaría el log del servidor.
+    """
+    try:
+        await _analyze(receipt_id)
+    except Exception as exc:
+        logger.error(
+            "receipt.inline_analysis_failed",
+            extra={"receipt_id": str(receipt_id), "error": str(exc)},
+            exc_info=True,
+        )
+
+
 def enqueue_receipt_analysis(receipt_id: uuid.UUID) -> str | None:
     """Encola el análisis y devuelve el id de tarea.
 

@@ -1,0 +1,45 @@
+# Despliegue en Render como un ÚNICO servicio web.
+#
+# La extracción de comprobantes corre dentro del propio proceso web
+# (RECEIPT_PROCESSING_MODE=inline) porque los planes gratuitos no ofrecen
+# workers en segundo plano. Al pasar a plan de pago, añade un servicio
+# `worker` con el comando de Celery y cambia el modo a `celery`.
+services:
+  - type: web
+    name: finai-gateway
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/v1/health
+    dockerCommand: >-
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: RECEIPT_PROCESSING_MODE
+        value: inline
+
+      # Render genera una clave aleatoria en el primer despliegue.
+      # Consúltala en el panel: Environment -> API_KEYS.
+      - key: API_KEYS
+        generateValue: true
+
+      # Estas tres se rellenan a mano en el panel (Postgres y Redis gestionados
+      # y la clave de Anthropic). `sync: false` evita guardarlas en el repo.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      - key: STRIPE_API_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: RECONCILIATION_AUTO_SETTLE
+        value: "false"

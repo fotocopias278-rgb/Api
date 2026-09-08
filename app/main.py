@@ -63,13 +63,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    problems = settings.validate_runtime()
-    if problems and settings.is_production:
-        # En producción una configuración incompleta es un fallo de despliegue,
-        # no algo que deba descubrirse con el primer pago rechazado.
-        raise RuntimeError("Configuración inválida: " + " | ".join(problems))
-    for problem in problems:
-        logger.warning("config.incomplete", extra={"detail": problem})
+    errores, avisos = settings.validate_runtime()
+    for aviso in avisos:
+        logger.warning("config.aviso", extra={"detail": aviso})
+    for error in errores:
+        logger.error("config.error", extra={"detail": error})
+    if errores and settings.is_production:
+        # En producción una configuración inválida es un fallo de despliegue,
+        # no algo que deba descubrirse con el primer pago.
+        raise RuntimeError("Configuración inválida: " + " | ".join(errores))
 
     redis = redis_from_url(settings.redis_url)
     app.state.redis = redis

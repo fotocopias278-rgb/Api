@@ -17,6 +17,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # Permite construir los ajustes por nombre de campo además de por
+        # alias, que es como los reconstruyen los tests a partir de model_dump.
+        populate_by_name=True,
     )
 
     # --- Aplicación ---
@@ -77,6 +80,12 @@ class Settings(BaseSettings):
     reconciliation_auto_settle: bool = False
     receipt_max_bytes: int = 10 * 1024 * 1024
     receipt_storage_dir: str = "./var/receipts"
+    # `celery`: la extracción va a la cola y la ejecuta un worker aparte (lo
+    # adecuado en producción, porque aísla el gasto de IA del tráfico web).
+    # `inline`: la ejecuta el propio proceso web tras responder. Permite
+    # desplegar todo como un único servicio, que es lo que ofrecen los planes
+    # gratuitos, a costa de compartir CPU con las peticiones.
+    receipt_processing_mode: Literal["celery", "inline"] = "celery"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -101,28 +110,40 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
-    def validate_runtime(self) -> list[str]:
-        """Devuelve los problemas de configuración detectados al arrancar.
+    def validate_runtime(self) -> tuple[list[str], list[str]]:
+        """Revisa la configuración al arrancar. Devuelve `(errores, avisos)`.
 
-        En producción se tratan como errores fatales; en el resto de entornos
-        solo se registran como avisos para no bloquear el desarrollo local.
+        Los errores abortan el arranque en producción; los avisos solo se
+        registran. La distinción importa: desplegar sin Stripe es legítimo
+        —un gateway que solo cobre por transferencia no lo necesita—, pero
+        desplegar con Stripe y sin secreto de webhook no lo es.
         """
-        problems: list[str] = []
+        errores: list[str] = []
+        avisos: list[str] = []
+
         if not self.api_keys:
-            problems.append("API_KEYS no está configurado: la autenticación rechazará todo.")
-        if not self.stripe_api_key:
-            problems.append("STRIPE_API_KEY ausente: la pasarela opera en modo simulado.")
-        if not self.stripe_webhook_secret:
-            problems.append("STRIPE_WEBHOOK_SECRET ausente: no se verificarán los webhooks.")
-        if not self.anthropic_api_key:
-            problems.append(
-                "ANTHROPIC_API_KEY ausente: la extracción de comprobantes usará el stub."
-            )
-        if not self.rate_limit_enabled:
-            problems.append("RATE_LIMIT_ENABLED=false: la API queda sin limitación de tasa.")
+            errores.append("API_KEYS no está configurado: la API rechazaría todas las peticiones.")
         if self.fraud_review_threshold >= self.fraud_reject_threshold:
-            problems.append("FRAUD_REVIEW_THRESHOLD debe ser menor que FRAUD_REJECT_THRESHOLD.")
-        return problems
+            errores.append("FRAUD_REVIEW_THRESHOLD debe ser menor que FRAUD_REJECT_THRESHOLD.")
+        if self.stripe_api_key and not self.stripe_webhook_secret:
+            errores.append(
+                "STRIPE_API_KEY sin STRIPE_WEBHOOK_SECRET: se cobrarían pagos reales sin "
+                "poder verificar las notificaciones de la pasarela."
+            )
+
+        if not self.stripe_api_key:
+            avisos.append("STRIPE_API_KEY ausente: la pasarela opera en modo simulado.")
+        if not self.anthropic_api_key:
+            avisos.append("ANTHROPIC_API_KEY ausente: la extracción usará el stub.")
+        if not self.rate_limit_enabled:
+            avisos.append("RATE_LIMIT_ENABLED=false: la API queda sin limitación de tasa.")
+        if self.receipt_processing_mode == "inline":
+            avisos.append(
+                "RECEIPT_PROCESSING_MODE=inline: la extracción comparte proceso con el "
+                "tráfico web."
+            )
+
+        return errores, avisos
 
 
 @lru_cache
