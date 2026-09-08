@@ -1,0 +1,22 @@
+# --- Núcleo web ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# --- Validación / configuración ---
+pydantic[email]>=2.9.0
+pydantic-settings>=2.5.0
+
+# --- Persistencia ---
+SQLAlchemy[asyncio]>=2.0.35
+asyncpg>=0.30.0
+alembic>=1.13.0
+greenlet>=3.1.0
+
+# --- Caché y colas ---
+redis>=5.1.0
+celery>=5.4.0
+
+# --- Integraciones externas ---
+stripe>=11.0.0
+anthropic>=1.4.0
