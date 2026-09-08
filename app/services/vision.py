@@ -161,7 +161,21 @@ class GeminiVisionProvider:
         self, config: Settings | None = None, client: genai.Client | None = None
     ) -> None:
         self._settings = config or default_settings
-        self._client = client or genai.Client(api_key=self._settings.google_api_key)
+        self._client = client or genai.Client(
+            api_key=self._settings.google_api_key,
+            http_options=genai_types.HttpOptions(
+                # Un 503 "high demand" o un 429 son transitorios y frecuentes en
+                # el plan gratuito: reintentar con espera creciente evita dejar
+                # el comprobante sin analizar por un pico de carga ajeno.
+                retry_options=genai_types.HttpRetryOptions(
+                    attempts=4,
+                    initial_delay=1.0,
+                    max_delay=15.0,
+                    http_status_codes=[429, 500, 502, 503, 504],
+                ),
+                timeout=int(self._settings.vision_timeout_seconds * 1000),
+            ),
+        )
 
     async def extract(self, content: bytes, media_type: str) -> ReceiptExtraction:
         if media_type not in SUPPORTED_MEDIA_TYPES:

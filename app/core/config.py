@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     vision_provider: Literal["auto", "anthropic", "gemini"] = "auto"
     anthropic_api_key: str | None = None
     google_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
     vision_model: str = "claude-opus-5"
     vision_max_tokens: int = 8000
     vision_timeout_seconds: float = 120.0

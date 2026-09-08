@@ -35,6 +35,11 @@ os.environ.update(
         "STRIPE_WEBHOOK_SECRET": "whsec_test_secret",
         "FRAUD_BLOCKED_BINS": "666666",
         "LOG_LEVEL": "WARNING",
+        # Se neutralizan las credenciales de los proveedores de IA: si un
+        # desarrollador tiene su clave en `.env`, pydantic-settings la leería y
+        # la suite acabaría haciendo llamadas de pago reales sin pretenderlo.
+        "GOOGLE_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
         # Cupo pequeño para poder agotarlo en los tests sin lanzar cientos de
         # peticiones. El cliente por defecto lleva el limitador desactivado.
         "RATE_LIMIT_PER_MINUTE": "60",

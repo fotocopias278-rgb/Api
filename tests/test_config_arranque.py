@@ -50,3 +50,14 @@ def test_una_configuracion_completa_no_da_errores():
         anthropic_api_key="sk-ant-x",
     ).validate_runtime()
     assert not errores
+
+
+def test_la_suite_nunca_hereda_credenciales_de_ia():
+    """Con un .env real presente, los tests deben seguir usando el stub.
+
+    Sin esta guarda, la batería podría hacer llamadas de pago contra el
+    proveedor configurado por quien la ejecute.
+    """
+    from app.services.vision import StubVisionProvider, get_vision_provider
+
+    assert isinstance(get_vision_provider(get_settings()), StubVisionProvider)

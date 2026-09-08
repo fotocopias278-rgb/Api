@@ -174,7 +174,7 @@ esquema. El resto del sistema no sabe cuál respondió.
 
 | Proveedor | Variable | Modelo por defecto | Nota |
 |---|---|---|---|
-| Google Gemini | `GOOGLE_API_KEY` | `gemini-2.5-flash` | Tiene plan gratuito |
+| Google Gemini | `GOOGLE_API_KEY` | `gemini-3.5-flash` | Tiene plan gratuito |
 | Anthropic Claude | `ANTHROPIC_API_KEY` | `claude-opus-5` | Requiere crédito prepago |
 
 `VISION_PROVIDER=auto` (por defecto) usa el primero que tenga credenciales;
