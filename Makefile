@@ -1,4 +1,4 @@
-.PHONY: help install dev test test-pg lint fmt migrate revision run worker up down logs clean
+.PHONY: help install dev test test-pg smoke-vision lint fmt migrate revision run worker up down logs clean
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -19,6 +19,9 @@ test:  ## Ejecuta la batería de pruebas
 test-pg:  ## Ejecuta las pruebas contra PostgreSQL (usa TEST_DATABASE_URL)
 	TEST_DATABASE_URL=$${TEST_DATABASE_URL:-postgresql+asyncpg://finai:finai@localhost:5432/finai} \
 		$(PY) -m pytest
+
+smoke-vision:  ## Prueba la extracción contra la API real (requiere ANTHROPIC_API_KEY)
+	$(PY) scripts/smoke_vision.py
 
 lint:  ## Analiza el código con ruff
 	$(VENV)/bin/ruff check app tests alembic
