@@ -47,7 +47,9 @@ Crea una base Redis y copia la URL `rediss://...` (con dos eses: va cifrada).
 
 1. *New* → *Blueprint* y apunta a este repositorio; Render lee `render.yaml`.
 2. Rellena en *Environment* las variables marcadas como pendientes:
-   `DATABASE_URL`, `REDIS_URL` y `ANTHROPIC_API_KEY`.
+   `DATABASE_URL`, `REDIS_URL` y la clave del proveedor de visión
+   (`GOOGLE_API_KEY` para Gemini, que tiene plan gratuito, o
+   `ANTHROPIC_API_KEY` para Claude; basta con una).
 3. Copia el valor que Render generó para `API_KEYS`: es la clave con la que se
    autenticará tu aplicación.
 

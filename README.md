@@ -11,7 +11,7 @@ API REST asíncrona de alto rendimiento para el procesamiento de pagos, mitigaci
 - *Base de Datos:* PostgreSQL con SQLAlchemy 2.0 (Async) + Alembic
 - *Caché y Colas:* Redis + Celery
 - *Validación de Esquemas:* Pydantic v2
-- *Modelos IA / OCR:* Anthropic Claude API (Structured Outputs)
+- *Modelos IA / OCR:* Google Gemini o Anthropic Claude (Structured Outputs)
 - *Pasarela de Pago:* Stripe SDK (Sandbox / Webhooks)
 - *Pruebas:* PyTest, HTTPX
 - *Contenedores:* Docker & Docker Compose
@@ -167,6 +167,26 @@ curl -X POST http://localhost:8000/api/v1/receipts \
 
 ---
 
+## 🤖 Proveedores de visión
+
+Dos proveedores intercambiables tras el mismo `Protocol`, con idéntico prompt y
+esquema. El resto del sistema no sabe cuál respondió.
+
+| Proveedor | Variable | Modelo por defecto | Nota |
+|---|---|---|---|
+| Google Gemini | `GOOGLE_API_KEY` | `gemini-2.5-flash` | Tiene plan gratuito |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | `claude-opus-5` | Requiere crédito prepago |
+
+`VISION_PROVIDER=auto` (por defecto) usa el primero que tenga credenciales;
+`anthropic` o `gemini` lo fijan. Nombrar uno sin su clave **no arranca con el
+otro a escondidas**: cae al stub y lo registra. Cambiar de modelo por sorpresa en
+un sistema que decide sobre dinero sería peor que no extraer nada.
+
+Sin ninguna clave se usa el stub, que marca todo como ilegible: es preferible
+dejar la conciliación pendiente a dar por bueno un comprobante que nadie ha leído.
+
+---
+
 ## 🛡️ Motor de fraude
 
 Reglas ponderadas sobre un contexto que reúne el importe, la geografía y los
@@ -194,8 +214,8 @@ inmutable en `fraud_assessments`.
 
 ## 👁️ Extracción y conciliación de comprobantes
 
-`POST /receipts` guarda el fichero, responde `202` y encola una tarea de Celery.
-El worker envía la imagen o el PDF a Claude con *structured outputs*, de modo que
+`POST /receipts` guarda el fichero, responde `202` y encola el análisis. El
+proceso envía la imagen o el PDF al modelo con *structured outputs*, de modo que
 la respuesta valida contra `ReceiptExtraction` sin parsear texto libre. Después
 se concilia contra el pago:
 
@@ -241,7 +261,7 @@ por divisa se respeta (JPY sin decimales, KWD con tres).
 ## 🧪 Pruebas
 
 ```bash
-make test                                        # 150 pruebas sobre SQLite
+make test                                        # 159 pruebas sobre SQLite
 make test-pg                                     # las mismas contra PostgreSQL
 make lint
 ```
@@ -251,11 +271,11 @@ el ciclo de vida del pago (idempotencia, revisión, devolución), el webhook
 (firma, caducidad, idempotencia), la limitación de tasa y el contrato con la API
 de visión.
 
-Ese último se verifica contra un doble local del endpoint de Messages, así que
-comprueba la forma exacta de la petición sin gastar una llamada. Lo que no puede
-comprobar es si el modelo *lee bien* un comprobante: para eso está
-`make smoke-vision`, que hace una única llamada real (requiere
-`ANTHROPIC_API_KEY`).
+Los contratos con los proveedores de visión se verifican contra dobles locales
+de sus endpoints —uno por proveedor—, así que comprueban la forma exacta de la
+petición sin gastar una llamada. Lo que no pueden comprobar es si el modelo
+*lee bien* un comprobante: para eso está `make smoke-vision`, que hace una única
+llamada real con el proveedor que tengas configurado.
 
 La suite corre sobre SQLite por defecto —rápida y sin dependencias— pero
 apuntando `TEST_DATABASE_URL` a un Postgres se ejecuta idéntica contra el motor

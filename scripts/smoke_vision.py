@@ -1,7 +1,8 @@
 """Prueba de humo de la extracción contra la API real de Claude.
 
 Uso:
-    ANTHROPIC_API_KEY=sk-ant-... python scripts/smoke_vision.py [ruta_al_comprobante]
+    GOOGLE_API_KEY=...    python scripts/smoke_vision.py [ruta_al_comprobante]
+    ANTHROPIC_API_KEY=... python scripts/smoke_vision.py [ruta_al_comprobante]
 
 Hace una única llamada real al modelo con un comprobante de ejemplo, enseña lo
 que ha extraído y lo concilia contra un pago de prueba. Es lo único del sistema
@@ -19,11 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings
+from app.core.exceptions import VisionExtractionError
 from app.core.money import format_amount
 from app.db.models import Payment
 from app.schemas.enums import PaymentMethod
 from app.services.reconciliation import reconcile
-from app.services.vision import AnthropicVisionProvider
+from app.services.vision import StubVisionProvider, get_vision_provider
 
 POR_DEFECTO = Path(__file__).resolve().parent.parent / "tests/fixtures/comprobante_ejemplo.png"
 
@@ -38,8 +40,13 @@ def barra(titulo: str) -> None:
 
 async def main() -> int:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        print("✗ Falta ANTHROPIC_API_KEY. Exporta la clave y vuelve a ejecutar.")
+    proveedor = get_vision_provider(settings)
+    if isinstance(proveedor, StubVisionProvider):
+        print(
+            "✗ No hay proveedor de visión configurado.\n"
+            "  Exporta GOOGLE_API_KEY (Gemini) o ANTHROPIC_API_KEY (Claude)\n"
+            "  y vuelve a ejecutar."
+        )
         return 1
 
     ruta = Path(sys.argv[1]) if len(sys.argv) > 1 else POR_DEFECTO
@@ -50,11 +57,21 @@ async def main() -> int:
     contenido = ruta.read_bytes()
     tipo = mimetypes.guess_type(ruta.name)[0] or "image/png"
     print(f"Comprobante: {ruta.name} ({len(contenido):,} bytes, {tipo})")
-    print(f"Modelo:      {settings.vision_model}")
+    nombre = type(proveedor).__name__.replace("VisionProvider", "")
+    modelo = settings.gemini_model if nombre == "Gemini" else settings.vision_model
+    print(f"Proveedor:   {nombre} ({modelo})")
 
-    barra("Llamando a la API de Claude")
+    barra("Llamando al modelo")
     inicio = asyncio.get_event_loop().time()
-    extraccion = await AnthropicVisionProvider(settings).extract(contenido, tipo)
+    try:
+        extraccion = await proveedor.extract(contenido, tipo)
+    except VisionExtractionError as exc:
+        # Un fallo del proveedor es un resultado esperable de esta prueba
+        # (clave inválida, cuota agotada): se informa, no se vuelca una traza.
+        print(f"✗ {exc.message}")
+        if exc.details:
+            print(f"  {exc.details}")
+        return 1
     segundos = asyncio.get_event_loop().time() - inicio
     print(f"Respuesta en {segundos:.1f} s")
 

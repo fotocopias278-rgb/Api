@@ -50,7 +50,11 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str | None = None
 
     # --- IA / Visión ---
+    # `auto` usa el primer proveedor con credenciales; también puede fijarse.
+    vision_provider: Literal["auto", "anthropic", "gemini"] = "auto"
     anthropic_api_key: str | None = None
+    google_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
     vision_model: str = "claude-opus-5"
     vision_max_tokens: int = 8000
     vision_timeout_seconds: float = 120.0
@@ -133,8 +137,10 @@ class Settings(BaseSettings):
 
         if not self.stripe_api_key:
             avisos.append("STRIPE_API_KEY ausente: la pasarela opera en modo simulado.")
-        if not self.anthropic_api_key:
-            avisos.append("ANTHROPIC_API_KEY ausente: la extracción usará el stub.")
+        if not (self.anthropic_api_key or self.google_api_key):
+            avisos.append(
+                "Sin ANTHROPIC_API_KEY ni GOOGLE_API_KEY: la extracción usará el stub."
+            )
         if not self.rate_limit_enabled:
             avisos.append("RATE_LIMIT_ENABLED=false: la API queda sin limitación de tasa.")
         if self.receipt_processing_mode == "inline":

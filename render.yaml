@@ -31,6 +31,9 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      # Clave del proveedor de visión: basta con una de las dos.
+      - key: GOOGLE_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
 

@@ -1,8 +1,9 @@
 """Extracción de datos de comprobantes bancarios con IA multimodal.
 
-Se usa la API de Claude con *structured outputs* (`messages.parse`), que
-garantiza que la respuesta valida contra `ReceiptExtraction`; así no hace falta
-parsear texto libre ni tolerar JSON malformado.
+Hay dos proveedores intercambiables —Claude y Gemini— tras el mismo `Protocol`.
+Ambos usan salida estructurada contra `ReceiptExtraction`, de modo que la
+respuesta viene validada y no hay que parsear texto libre ni tolerar JSON
+malformado. El resto del sistema no sabe cuál de los dos respondió.
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ import logging
 from typing import Protocol
 
 import anthropic
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 from app.core.config import Settings
 from app.core.config import settings as default_settings
@@ -130,6 +134,105 @@ class AnthropicVisionProvider:
         return response.parsed_output
 
 
+# Finales que no son una extracción válida: el modelo cortó por política,
+# no por haber terminado. Equivalen al `refusal` de Anthropic.
+_FINALES_BLOQUEADOS = frozenset(
+    {
+        genai_types.FinishReason.SAFETY,
+        genai_types.FinishReason.PROHIBITED_CONTENT,
+        genai_types.FinishReason.BLOCKLIST,
+        genai_types.FinishReason.SPII,
+        genai_types.FinishReason.RECITATION,
+        genai_types.FinishReason.IMAGE_SAFETY,
+    }
+)
+
+
+class GeminiVisionProvider:
+    """Extractor respaldado por la API de Google Gemini.
+
+    Comparte el prompt y el esquema con el proveedor de Anthropic: el SDK
+    convierte `ReceiptExtraction` a su propio formato conservando los campos
+    obligatorios, los nulables y las descripciones, así que el contrato de
+    salida es el mismo y el resto del sistema no nota de dónde viene el dato.
+    """
+
+    def __init__(
+        self, config: Settings | None = None, client: genai.Client | None = None
+    ) -> None:
+        self._settings = config or default_settings
+        self._client = client or genai.Client(api_key=self._settings.google_api_key)
+
+    async def extract(self, content: bytes, media_type: str) -> ReceiptExtraction:
+        if media_type not in SUPPORTED_MEDIA_TYPES:
+            raise VisionExtractionError(
+                f"Tipo de fichero no soportado: {media_type}",
+                details={"supported": sorted(SUPPORTED_MEDIA_TYPES)},
+            )
+
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self._settings.gemini_model,
+                contents=[
+                    genai_types.Part.from_bytes(data=content, mime_type=media_type),
+                    USER_INSTRUCTION,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=ReceiptExtraction,
+                    # Aquí no hay herramientas que llamar; desactivarlo evita
+                    # además un aviso del SDK en cada petición.
+                    automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    ),
+                ),
+            )
+        except genai_errors.ClientError as exc:
+            # 4xx: clave inválida, cuota agotada, fichero rechazado.
+            raise VisionExtractionError(
+                f"Gemini rechazó la petición ({exc.code})."
+            ) from exc
+        except genai_errors.ServerError as exc:
+            raise VisionExtractionError("Gemini no está disponible ahora mismo.") from exc
+        except genai_errors.APIError as exc:
+            raise VisionExtractionError(f"Error del proveedor de visión: {exc}") from exc
+
+        self._verificar_bloqueo(response)
+
+        if not isinstance(response.parsed, ReceiptExtraction):
+            raise VisionExtractionError("El modelo no devolvió una extracción válida.")
+
+        uso = response.usage_metadata
+        logger.info(
+            "receipt.extracted",
+            extra={
+                "provider": "gemini",
+                "input_tokens": getattr(uso, "prompt_token_count", None),
+                "output_tokens": getattr(uso, "candidates_token_count", None),
+                "confidence": response.parsed.confidence,
+            },
+        )
+        return response.parsed
+
+    @staticmethod
+    def _verificar_bloqueo(response: genai_types.GenerateContentResponse) -> None:
+        """Un corte por política llega como respuesta correcta, no como error."""
+        feedback = response.prompt_feedback
+        if feedback is not None and feedback.block_reason is not None:
+            raise VisionExtractionError(
+                "El modelo rechazó procesar el documento.",
+                details={"block_reason": str(feedback.block_reason)},
+            )
+
+        for candidate in response.candidates or []:
+            if candidate.finish_reason in _FINALES_BLOQUEADOS:
+                raise VisionExtractionError(
+                    "El modelo rechazó procesar el documento.",
+                    details={"finish_reason": str(candidate.finish_reason)},
+                )
+
+
 class StubVisionProvider:
     """Extractor de reserva cuando no hay credenciales configuradas.
 
@@ -159,8 +262,30 @@ class StubVisionProvider:
 
 
 def get_vision_provider(config: Settings | None = None) -> VisionProvider:
-    """Selecciona el proveedor según haya o no credenciales."""
+    """Selecciona el proveedor de visión.
+
+    Con `VISION_PROVIDER=auto` (por defecto) se usa el primero que tenga
+    credenciales. Nombrar uno explícitamente sin su clave no arranca con otro a
+    escondidas: cae al stub y lo registra, porque cambiar de modelo por sorpresa
+    en un sistema que decide sobre dinero sería peor que no extraer nada.
+    """
     cfg = config or default_settings
+    elegido = cfg.vision_provider
+
+    if elegido == "anthropic":
+        if cfg.anthropic_api_key:
+            return AnthropicVisionProvider(cfg)
+        logger.error("vision.proveedor_sin_credencial", extra={"provider": "anthropic"})
+        return StubVisionProvider()
+
+    if elegido == "gemini":
+        if cfg.google_api_key:
+            return GeminiVisionProvider(cfg)
+        logger.error("vision.proveedor_sin_credencial", extra={"provider": "gemini"})
+        return StubVisionProvider()
+
     if cfg.anthropic_api_key:
         return AnthropicVisionProvider(cfg)
+    if cfg.google_api_key:
+        return GeminiVisionProvider(cfg)
     return StubVisionProvider()
