@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     vision_max_tokens: int = 8000
     vision_timeout_seconds: float = 120.0
 
+    # --- Limitación de tasa ---
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 120
+    # Ráfaga máxima admitida; por defecto, un minuto entero de cupo.
+    rate_limit_burst: int = 0
+    # Si Redis cae: True deja pasar el tráfico, False lo rechaza con 429.
+    rate_limit_fail_open: bool = True
+
     # --- Motor de fraude ---
     fraud_review_threshold: int = 40
     fraud_reject_threshold: int = 75
@@ -106,6 +114,8 @@ class Settings(BaseSettings):
             problems.append(
                 "ANTHROPIC_API_KEY ausente: la extracción de comprobantes usará el stub."
             )
+        if not self.rate_limit_enabled:
+            problems.append("RATE_LIMIT_ENABLED=false: la API queda sin limitación de tasa.")
         if self.fraud_review_threshold >= self.fraud_reject_threshold:
             problems.append("FRAUD_REVIEW_THRESHOLD debe ser menor que FRAUD_REJECT_THRESHOLD.")
         return problems

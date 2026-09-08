@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import text
 
 from app import __version__
@@ -25,7 +25,7 @@ async def health(settings: SettingsDep) -> HealthResponse:
 
 @router.get("/health/ready", response_model=HealthResponse, summary="Readiness")
 async def readiness(
-    session: SessionDep, settings: SettingsDep, response: Response
+    request: Request, session: SessionDep, settings: SettingsDep, response: Response
 ) -> HealthResponse:
     """Comprueba las dependencias externas antes de recibir tráfico."""
     checks: dict[str, str] = {}
@@ -36,6 +36,21 @@ async def readiness(
     except Exception as exc:
         logger.warning("health.database_unavailable", extra={"error": str(exc)})
         checks["database"] = "error"
+
+    redis = getattr(request.app.state, "redis", None)
+    if not settings.rate_limit_enabled:
+        checks["redis"] = "disabled"
+    elif redis is None:
+        checks["redis"] = "unavailable"
+    else:
+        try:
+            await redis.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            logger.warning("health.redis_unavailable", extra={"error": str(exc)})
+            # Con `fail_open` la API sigue sirviendo sin limitador: se degrada,
+            # no se cae, y por eso no marca la sonda como no lista.
+            checks["redis"] = "error"
 
     checks["stripe"] = "configured" if settings.stripe_api_key else "simulated"
     checks["vision"] = "configured" if settings.anthropic_api_key else "stub"

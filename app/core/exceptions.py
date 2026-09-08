@@ -11,10 +11,18 @@ class FinAIError(Exception):
     status_code: int = 500
     code: str = "internal_error"
 
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.details = details or {}
+        # Algunos errores llevan cabeceras propias (p. ej. `Retry-After`).
+        self.headers = headers or {}
 
 
 class NotFoundError(FinAIError):
@@ -51,6 +59,13 @@ class GatewayError(FinAIError):
 
     status_code = 502
     code = "gateway_error"
+
+
+class RateLimitedError(FinAIError):
+    """Se ha superado el límite de peticiones."""
+
+    status_code = 429
+    code = "rate_limited"
 
 
 class WebhookVerificationError(FinAIError):

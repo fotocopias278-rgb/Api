@@ -79,6 +79,39 @@ python -c "from app.core.security import generate_api_key; print(generate_api_ke
 
 ---
 
+## 🚦 Limitación de tasa
+
+Cubo de fichas por identidad, respaldado por Redis. Permite ráfagas cortas sin
+dejar de acotar el ritmo sostenido — lo que quiere una pasarela de cobro.
+
+El cálculo entero (leer estado, recargar, consumir) vive en **un script Lua
+atómico**. No es un detalle de estilo: con llamadas sueltas, dos peticiones
+simultáneas leen el mismo saldo y ambas pasan. La prueba de concurrencia lo
+verifica — sin el script, 50 de 50 peticiones se cuelan; con él, exactamente 5.
+
+- **Identidad:** la clave de API (se guarda su huella SHA-256, nunca en claro) y,
+  para el tráfico sin autenticar, la IP. El limitador corre *antes* de
+  autenticar, así que también frena el sondeo de claves.
+- **Coste por endpoint:** no todas las peticiones valen lo mismo.
+
+  | Endpoint | Fichas |
+  |---|---|
+  | `POST /receipts` (extracción con IA) | 10 |
+  | `POST /payments` (cobro) | 5 |
+  | `POST /fraud/evaluate` | 2 |
+  | Resto | 1 |
+
+- **Cabeceras:** `X-RateLimit-Limit` y `X-RateLimit-Remaining` en cada respuesta;
+  `Retry-After` (nunca `0`) en los `429`.
+- **Exentas:** `/health*`, `/docs`, `/redoc`, `/openapi.json`. Limitar las sondas
+  provocaría reinicios en cascada justo cuando hay carga.
+- **Si Redis cae:** por defecto se deja pasar el tráfico (`fail-open`) y se
+  registra el fallo; quedarse sin contador es malo, pero tumbar toda la pasarela
+  porque el contador está caído lo es más. Con `RATE_LIMIT_FAIL_OPEN=false` se
+  invierte el criterio.
+
+---
+
 ## 📡 Endpoints
 
 | Método | Ruta | Descripción |
@@ -169,13 +202,20 @@ por divisa se respeta (JPY sin decimales, KWD con tres).
 ## 🧪 Pruebas
 
 ```bash
-make test     # 93 pruebas sobre SQLite, sin servicios externos
+make test     # 122 pruebas
 make lint
 ```
 
 La batería cubre el motor de reglas, la conversión de importes, la conciliación,
-el ciclo de vida del pago (idempotencia, revisión, devolución) y el webhook
-(firma, caducidad, idempotencia).
+el ciclo de vida del pago (idempotencia, revisión, devolución), el webhook
+(firma, caducidad, idempotencia) y la limitación de tasa.
+
+Todo corre sobre SQLite, sin servicios externos, **salvo la limitación de tasa**:
+esas pruebas levantan un `redis-server` real y efímero en un puerto libre, porque
+las garantías que importan (atomicidad del script, TTL, recuperación de
+`NOSCRIPT`) solo se comprueban de verdad contra el servidor. Si el binario no
+está disponible, la fixture cae automáticamente a `fakeredis`, que también
+ejecuta Lua, y las mismas pruebas siguen pasando.
 
 ---
 

@@ -11,18 +11,42 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.asyncio import from_url as redis_from_url
 
 from app import __version__
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
-from app.core.exceptions import FinAIError
+from app.core.exceptions import FinAIError, RateLimitedError
 from app.core.logging import configure_logging, request_id_ctx
+from app.core.security import API_KEY_HEADER
 from app.db.session import engine
 from app.schemas.common import ErrorResponse
+from app.services.rate_limit import RateLimiter, identity_from
 
 logger = logging.getLogger(__name__)
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+# Rutas sin limitación: las sondas las consulta el orquestador constantemente y
+# limitarlas provocaría reinicios en cascada justo cuando hay carga.
+RATE_LIMIT_EXEMPT = ("/api/v1/health", "/docs", "/redoc", "/openapi.json")
+
+# Coste en fichas por endpoint. Un cobro o una extracción con IA valen mucho más
+# que una consulta, así que vacían el cubo antes.
+ROUTE_COSTS: tuple[tuple[str, str, int], ...] = (
+    ("POST", "/api/v1/receipts", 10),
+    ("POST", "/api/v1/payments", 5),
+    ("POST", "/api/v1/fraud/evaluate", 2),
+)
+
+
+def cost_for(method: str, path: str) -> int:
+    for route_method, prefix, cost in ROUTE_COSTS:
+        # Se compara el prefijo exacto para no cobrar de más a las subrutas
+        # (p. ej. `/payments/{ref}/refund` no es una creación de pago).
+        if method == route_method and path.rstrip("/") == prefix:
+            return cost
+    return 1
 
 DESCRIPTION = """
 API de validación de pagos, detección de fraude en tiempo real y conciliación
@@ -47,8 +71,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     for problem in problems:
         logger.warning("config.incomplete", extra={"detail": problem})
 
-    logger.info("app.startup", extra={"version": __version__, "environment": settings.environment})
+    redis = redis_from_url(settings.redis_url)
+    app.state.redis = redis
+    app.state.rate_limiter = RateLimiter(redis, settings)
+
+    logger.info(
+        "app.startup",
+        extra={
+            "version": __version__,
+            "environment": settings.environment,
+            "rate_limit_enabled": settings.rate_limit_enabled,
+        },
+    )
     yield
+    await redis.aclose()
     await engine.dispose()
     logger.info("app.shutdown")
 
@@ -74,6 +110,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def _register_middleware(app: FastAPI) -> None:
+    # El orden importa: en Starlette el último middleware registrado es el más
+    # externo. Se registra primero el limitador para que `request_context` lo
+    # envuelva y toda respuesta 429 lleve ya su identificador de petición.
+    @app.middleware("http")
+    async def rate_limit(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Aplica el cubo de fichas antes de que la petición llegue a la ruta."""
+        limiter: RateLimiter | None = getattr(request.app.state, "rate_limiter", None)
+        path = request.url.path
+
+        if limiter is None or not limiter.enabled or path.startswith(RATE_LIMIT_EXEMPT):
+            return await call_next(request)
+
+        identity = identity_from(
+            request.headers.get(API_KEY_HEADER),
+            request.client.host if request.client else None,
+        )
+        result = await limiter.check(identity, cost=cost_for(request.method, path))
+
+        if not result.allowed:
+            logger.warning(
+                "rate_limit.exceeded",
+                extra={"identity": identity, "path": path, "method": request.method},
+            )
+            # Se devuelve la respuesta en vez de lanzar la excepción: los
+            # manejadores de FastAPI viven *por dentro* de la pila de
+            # middlewares, así que lo que se lance aquí los sobrevuela y acaba
+            # en un 500. La excepción sigue siendo la fuente del contrato
+            # (estado, código y mensaje), solo cambia cómo se entrega.
+            error = RateLimitedError(
+                "Se ha superado el límite de peticiones.",
+                details={"limit_per_minute": result.limit},
+                headers={
+                    "Retry-After": result.retry_after_header,
+                    "X-RateLimit-Limit": str(result.limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+            return _error_response(
+                error.status_code, error.code, error.message, request, error.details, error.headers
+            )
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(result.limit)
+        response.headers["X-RateLimit-Remaining"] = str(result.remaining)
+        return response
+
     @app.middleware("http")
     async def request_context(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -105,7 +189,12 @@ def _register_middleware(app: FastAPI) -> None:
 
 
 def _error_response(
-    status_code: int, code: str, message: str, request: Request, details: dict | None = None
+    status_code: int,
+    code: str,
+    message: str,
+    request: Request,
+    details: dict | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     payload = ErrorResponse(
         code=code,
@@ -113,7 +202,9 @@ def _error_response(
         details=details or {},
         request_id=getattr(request.state, "request_id", None),
     )
-    return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=status_code, content=payload.model_dump(mode="json"), headers=headers
+    )
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
@@ -122,7 +213,9 @@ def _register_exception_handlers(app: FastAPI) -> None:
         """Traduce los errores de dominio al contrato de error de la API."""
         if exc.status_code >= 500:
             logger.exception("error.domain", extra={"code": exc.code})
-        return _error_response(exc.status_code, exc.code, exc.message, request, exc.details)
+        return _error_response(
+            exc.status_code, exc.code, exc.message, request, exc.details, exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
