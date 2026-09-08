@@ -29,15 +29,30 @@ falta. Unos 15 minutos.
 
 ### 1. Base de datos — [neon.tech](https://neon.tech)
 
-Crea un proyecto y copia la cadena de conexión. **Cámbiale el driver**, porque
-esta API usa el asíncrono:
+Crea un proyecto y copia la cadena. **No sirve tal cual**: Neon la entrega en el
+formato de `psycopg`, y esta API usa `asyncpg`. Hay que hacerle tres cambios.
 
 ```
-postgresql://usuario:clave@host/db      ← lo que te da Neon
-postgresql+asyncpg://usuario:clave@host/db   ← lo que hay que poner
+postgresql://user:clave@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require&channel_binding=require
 ```
 
-Quita también `?sslmode=require` si viene: `asyncpg` no entiende ese parámetro.
+1. `postgresql://` → **`postgresql+asyncpg://`**
+2. `?sslmode=require&channel_binding=require` → **`?ssl=require`**
+3. El resto, igual.
+
+```
+postgresql+asyncpg://user:clave@ep-xxx-pooler.region.aws.neon.tech/neondb?ssl=require
+```
+
+`sslmode` y `channel_binding` no son parámetros de asyncpg: se pasan tal cual a
+`asyncpg.connect()` y el arranque muere con
+`TypeError: connect() got an unexpected keyword argument 'sslmode'`.
+
+**Sobre el endpoint `-pooler`:** es PgBouncer en modo transacción. La aplicación
+lo detecta por el nombre y desactiva las sentencias preparadas de asyncpg, que
+ahí fallan de forma intermitente. No tienes que configurar nada, pero si
+prefieres menos latencia por conexión, usa el endpoint directo: el mismo host
+**sin** `-pooler`.
 
 ### 2. Redis — [upstash.com](https://upstash.com)
 
