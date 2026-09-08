@@ -26,7 +26,10 @@ class LocalFileStorage:
 
     def __init__(self, config: Settings | None = None) -> None:
         cfg = config or default_settings
-        self._root = Path(cfg.receipt_storage_dir)
+        # Se resuelve a ruta absoluta: `as_uri()` falla sobre una relativa, y el
+        # valor por defecto (`./var/receipts`) lo es. Sin esto, toda subida
+        # revienta con 500 en cualquier despliegue que no fije la variable.
+        self._root = Path(cfg.receipt_storage_dir).expanduser().resolve()
 
     async def save(self, key: str, content: bytes) -> str:
         path = self._root / key
