@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.schemas.enums import RiskDecision
+from app.schemas.fraud import FraudEvaluationResponse
 
 if TYPE_CHECKING:
     from app.db.models.payment import Payment
@@ -33,3 +34,13 @@ class FraudAssessment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     signals: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
     payment: Mapped[Payment] = relationship(back_populates="assessments")
+
+    @classmethod
+    def from_evaluation(cls, evaluation: FraudEvaluationResponse) -> FraudAssessment:
+        """Construye la fila auditable a partir del resultado del motor."""
+        return cls(
+            score=evaluation.score,
+            decision=evaluation.decision,
+            engine_version=evaluation.engine_version,
+            signals=[signal.model_dump() for signal in evaluation.signals],
+        )

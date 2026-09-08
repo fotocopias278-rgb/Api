@@ -125,6 +125,16 @@ RULES: tuple[Rule, ...] = (
 )
 
 
+# Señales que no salen de la operación sino del comprobante que la justifica.
+# Se puntúan con los mismos umbrales para que la decisión sea homogénea.
+RECEIPT_SIGNALS: dict[str, tuple[str, int]] = {
+    "RECEIPT_DUPLICATE": ("El justificante ya se usó para otro pago.", 60),
+    "RECEIPT_TAMPERING": ("El comprobante muestra indicios de manipulación.", 40),
+    "RECEIPT_MISMATCH": ("El comprobante no cuadra con el pago.", 25),
+}
+
+
+
 class FraudEngine:
     """Aplica las reglas y traduce la puntuación en una decisión."""
 
@@ -148,6 +158,22 @@ class FraudEngine:
                 FraudSignalRead(code=r.code, description=r.description, weight=r.weight)
                 for r in triggered
             ],
+        )
+
+    def evaluate_signals(self, codes: Iterable[str]) -> FraudEvaluationResponse:
+        """Puntúa señales ya identificadas (p. ej. las de un comprobante)."""
+        signals = [
+            FraudSignalRead(code=code, description=RECEIPT_SIGNALS[code][0],
+                            weight=RECEIPT_SIGNALS[code][1])
+            for code in codes
+            if code in RECEIPT_SIGNALS
+        ]
+        score = min(100, sum(signal.weight for signal in signals))
+        return FraudEvaluationResponse(
+            score=score,
+            decision=self._decide(score),
+            engine_version=self.VERSION,
+            signals=signals,
         )
 
     def _decide(self, score: int) -> RiskDecision:

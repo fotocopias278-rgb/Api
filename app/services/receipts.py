@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,14 +13,29 @@ from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import NotFoundError, ValidationError, VisionExtractionError
 from app.core.security import sha256_hexdigest
-from app.db.models import Payment, Receipt
-from app.schemas.enums import ReceiptStatus, ReconciliationStatus
+from app.db.models import FraudAssessment, Payment, Receipt
+from app.schemas.enums import (
+    PaymentMethod,
+    PaymentStatus,
+    ReceiptStatus,
+    ReconciliationStatus,
+    RiskDecision,
+)
+from app.schemas.receipt import ReconciliationResult
 from app.schemas.vision import ReceiptExtraction
+from app.services.fraud import FraudEngine, fraud_engine
 from app.services.reconciliation import reconcile
 from app.services.storage import ReceiptStorage, get_receipt_storage
 from app.services.vision import SUPPORTED_MEDIA_TYPES, VisionProvider, get_vision_provider
 
 logger = logging.getLogger(__name__)
+
+# Estados sobre los que la conciliación puede actuar. Un pago ya liquidado,
+# devuelto o rechazado no se toca: llegar tarde con un comprobante no puede
+# deshacer una decisión ya tomada.
+_ESTADOS_AFECTABLES = frozenset(
+    {PaymentStatus.PENDING, PaymentStatus.PROCESSING, PaymentStatus.UNDER_REVIEW}
+)
 
 
 class ReceiptService:
@@ -29,12 +45,14 @@ class ReceiptService:
         *,
         provider: VisionProvider | None = None,
         storage: ReceiptStorage | None = None,
+        engine: FraudEngine | None = None,
         config: Settings | None = None,
     ) -> None:
         self._session = session
         self._settings = config or default_settings
         self._provider = provider or get_vision_provider(self._settings)
         self._storage = storage or get_receipt_storage(self._settings)
+        self._engine = engine or fraud_engine
 
     async def register(
         self,
@@ -147,6 +165,79 @@ class ReceiptService:
         )
         receipt.reconciliation_status = result.status
         receipt.reconciliation_notes = result.notes
+
+        self._apply_to_payment(payment, result, extraction)
+
+    def _apply_to_payment(
+        self, payment: Payment, result: ReconciliationResult, extraction: ReceiptExtraction
+    ) -> None:
+        """Traslada el veredicto de la conciliación al pago.
+
+        Es el paso que convierte la conciliación en algo accionable: sin esto el
+        sistema solo emite un dictamen que nadie aplica.
+        """
+        if payment.status not in _ESTADOS_AFECTABLES:
+            logger.info(
+                "reconciliation.payment_no_afectable",
+                extra={"reference": payment.reference, "status": payment.status},
+            )
+            return
+
+        if result.status is ReconciliationStatus.UNREADABLE:
+            # Nada que concluir: el documento requiere que alguien lo mire.
+            return
+
+        if result.status is ReconciliationStatus.MATCHED:
+            self._on_matched(payment)
+            return
+
+        self._flag_payment(payment, result, extraction)
+
+    def _on_matched(self, payment: Payment) -> None:
+        # Solo una transferencia se liquida con el comprobante: en una tarjeta
+        # quien manda es la pasarela, no el papel que suba el cliente.
+        liquidable = (
+            self._settings.reconciliation_auto_settle
+            and payment.method is PaymentMethod.BANK_TRANSFER
+        )
+        if liquidable:
+            payment.status = PaymentStatus.SUCCEEDED
+            payment.settled_at = datetime.now(UTC)
+            logger.info("reconciliation.payment_settled", extra={"reference": payment.reference})
+            return
+
+        payment.status = PaymentStatus.UNDER_REVIEW
+
+    def _flag_payment(
+        self, payment: Payment, result: ReconciliationResult, extraction: ReceiptExtraction
+    ) -> None:
+        """Registra las señales de fraude del comprobante y retiene el pago."""
+        codes: list[str] = []
+        if result.status is ReconciliationStatus.DUPLICATE:
+            codes.append("RECEIPT_DUPLICATE")
+        if extraction.tampering_indicators:
+            codes.append("RECEIPT_TAMPERING")
+        if result.status is ReconciliationStatus.MISMATCHED:
+            codes.append("RECEIPT_MISMATCH")
+
+        assessment = self._engine.evaluate_signals(codes)
+        payment.assessments.append(FraudAssessment.from_evaluation(assessment))
+
+        # Nunca se rechaza solo por el comprobante, ni con la puntuación al
+        # máximo: la evidencia sale de un OCR y la última palabra es de una
+        # persona. La puntuación queda registrada para que pueda juzgarla.
+        payment.status = PaymentStatus.UNDER_REVIEW
+        logger.info(
+            "reconciliation.payment_flagged",
+            extra={
+                "reference": payment.reference,
+                "score": assessment.score,
+                "signals": [signal.code for signal in assessment.signals],
+                "propuesta": RiskDecision.REJECT
+                if assessment.decision is RiskDecision.REJECT
+                else RiskDecision.REVIEW,
+            },
+        )
 
     async def _operation_already_used(
         self, receipt: Receipt, extraction: ReceiptExtraction

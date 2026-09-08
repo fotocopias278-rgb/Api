@@ -194,6 +194,35 @@ se concilia contra el pago:
 - **`duplicate`** — ese número de operación ya justificó otro pago.
 - **`unreadable`** — el documento no es legible; requiere revisión manual.
 
+### El veredicto mueve el pago
+
+La conciliación no se queda en un dictamen: actúa sobre el pago.
+
+| Veredicto | Efecto sobre el pago |
+|---|---|
+| `matched` | Pasa a `under_review` — *propuesto* para liquidar. Con `RECONCILIATION_AUTO_SETTLE=true` y método transferencia, se liquida solo. |
+| `duplicate` | `under_review` + señal de fraude `RECEIPT_DUPLICATE` (60). |
+| `mismatched` | `under_review` + `RECEIPT_MISMATCH` (25), y `RECEIPT_TAMPERING` (40) si hay indicios de retoque. |
+| `unreadable` | No se toca el pago: alguien tiene que mirar el documento. |
+
+Dos límites deliberados:
+
+- **Un comprobante nunca rechaza un pago por sí solo**, ni con la puntuación al
+  máximo. La evidencia sale de un OCR; la última palabra es de una persona. La
+  puntuación queda registrada para que pueda juzgarla.
+- **Un comprobante tardío no deshace lo ya decidido:** un pago liquidado,
+  devuelto o rechazado no se ve afectado.
+
+### Tarjeta y transferencia son flujos distintos
+
+| | Tarjeta | Transferencia |
+|---|---|---|
+| Al crear el pago | Se cobra por la pasarela | **No se toca la pasarela** |
+| Qué lo liquida | El webhook de Stripe | El comprobante conciliado |
+
+Una transferencia jamás genera un `PaymentIntent`: el cliente envía el dinero por
+su banco, y abrir además un cobro con tarjeta en paralelo sería cobrar dos veces.
+
 Los importes se manejan siempre en unidades mínimas y con `Decimal`; el exponente
 por divisa se respeta (JPY sin decimales, KWD con tres).
 
@@ -202,7 +231,8 @@ por divisa se respeta (JPY sin decimales, KWD con tres).
 ## 🧪 Pruebas
 
 ```bash
-make test     # 122 pruebas
+make test                                        # 134 pruebas sobre SQLite
+make test-pg                                     # las mismas contra PostgreSQL
 make lint
 ```
 
@@ -210,12 +240,21 @@ La batería cubre el motor de reglas, la conversión de importes, la conciliaci�
 el ciclo de vida del pago (idempotencia, revisión, devolución), el webhook
 (firma, caducidad, idempotencia) y la limitación de tasa.
 
-Todo corre sobre SQLite, sin servicios externos, **salvo la limitación de tasa**:
-esas pruebas levantan un `redis-server` real y efímero en un puerto libre, porque
-las garantías que importan (atomicidad del script, TTL, recuperación de
-`NOSCRIPT`) solo se comprueban de verdad contra el servidor. Si el binario no
-está disponible, la fixture cae automáticamente a `fakeredis`, que también
-ejecuta Lua, y las mismas pruebas siguen pasando.
+La suite corre sobre SQLite por defecto —rápida y sin dependencias— pero
+apuntando `TEST_DATABASE_URL` a un Postgres se ejecuta idéntica contra el motor
+real. **Esto no es opcional para las carreras:** SQLite serializa las escrituras,
+así que la colisión de dos peticiones simultáneas con la misma clave de
+idempotencia solo se reproduce en Postgres.
+
+La limitación de tasa se prueba contra un `redis-server` real y efímero en un
+puerto libre (o el que indique `TEST_REDIS_URL`), porque las garantías que
+importan —atomicidad del script Lua, TTL, recuperación de `NOSCRIPT`— solo se
+comprueban contra el servidor. Sin binario disponible, la fixture cae a
+`fakeredis`, que también ejecuta Lua.
+
+La CI (`.github/workflows/ci.yml`) ejecuta lint, la suite sobre ambos motores con
+Postgres y Redis reales, `alembic check` —que falla si alguien cambia un modelo y
+olvida la migración— y la construcción de la imagen Docker.
 
 ---
 

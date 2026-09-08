@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # --- Conciliación de comprobantes ---
     reconciliation_amount_tolerance_minor: int = 100  # 1,00 de tolerancia
     reconciliation_date_window_hours: int = 72
+    # Con `false` (por defecto) un comprobante que cuadra NO liquida el pago:
+    # lo deja en revisión para que lo confirme una persona. Actívalo cuando
+    # tengas medida la tasa de acierto real del modelo sobre tus comprobantes.
+    reconciliation_auto_settle: bool = False
     receipt_max_bytes: int = 10 * 1024 * 1024
     receipt_storage_dir: str = "./var/receipts"
 

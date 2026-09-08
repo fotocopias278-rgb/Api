@@ -17,10 +17,19 @@ from collections.abc import AsyncIterator, Iterator
 _TMP_DIR = tempfile.mkdtemp(prefix="finai-tests-")
 _DB_PATH = os.path.join(_TMP_DIR, "test.db")
 
+# Por defecto la suite corre sobre SQLite (rápida y sin dependencias), pero
+# apuntando TEST_DATABASE_URL a un Postgres se ejecuta idéntica contra el motor
+# real. Es la única forma de detectar lo que SQLite oculta —sobre todo las
+# carreras, porque SQLite serializa las escrituras.
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", f"sqlite+aiosqlite:///{_DB_PATH}"
+)
+IS_POSTGRES = TEST_DATABASE_URL.startswith("postgresql")
+
 os.environ.update(
     {
         "ENVIRONMENT": "test",
-        "DATABASE_URL": f"sqlite+aiosqlite:///{_DB_PATH}",
+        "DATABASE_URL": TEST_DATABASE_URL,
         "API_KEYS": "test-key-primaria,test-key-secundaria",
         "RECEIPT_STORAGE_DIR": os.path.join(_TMP_DIR, "receipts"),
         "STRIPE_WEBHOOK_SECRET": "whsec_test_secret",
@@ -55,8 +64,8 @@ AUTH_HEADERS = {"X-API-Key": API_KEY}
 
 @pytest.fixture
 async def engine():
-    """Motor SQLite con el esquema creado desde el metadata."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{_DB_PATH}")
+    """Motor con el esquema recreado desde el metadata para cada test."""
+    engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -117,13 +126,22 @@ def _puerto_libre() -> int:
 
 @pytest.fixture(scope="session")
 def redis_url() -> Iterator[str | None]:
-    """Levanta un `redis-server` real y efímero para la sesión de tests.
+    """Proporciona un Redis real para la sesión de tests.
 
-    Se prefiere Redis de verdad: el limitador vive en un script Lua y sus
-    garantías (atomicidad, TTL, EVALSHA) solo se comprueban de verdad contra el
-    servidor. Si el binario no está —CI mínimos—, se devuelve None y las pruebas
-    caen a `fakeredis`, que también ejecuta Lua.
+    Por orden: el que indique TEST_REDIS_URL, un `redis-server` efímero en un
+    puerto libre, o `fakeredis` si no hay binario. Se prefiere Redis de verdad
+    porque el limitador vive en un script Lua y sus garantías (atomicidad, TTL,
+    recuperación de NOSCRIPT) solo se comprueban contra el servidor.
     """
+    # Un Redis facilitado por el entorno (contenedor de CI) manda sobre todo lo
+    # demás. Se exige la variable propia TEST_REDIS_URL en vez de reutilizar
+    # REDIS_URL: estas pruebas hacen FLUSHDB, y vaciar por error el Redis de
+    # desarrollo de alguien sería un estropicio difícil de perdonar.
+    externo = os.environ.get("TEST_REDIS_URL")
+    if externo:
+        yield externo
+        return
+
     binario = shutil.which("redis-server")
     if binario is None:
         yield None

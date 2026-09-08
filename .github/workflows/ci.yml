@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  # Un push nuevo cancela la ejecución anterior de la misma rama.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # La suite se ejecuta contra los motores reales, no contra sustitutos:
+      # las carreras de idempotencia solo se reproducen en PostgreSQL, y las
+      # garantías del limitador (atomicidad del script Lua, TTL) en Redis.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finai
+          POSTGRES_PASSWORD: finai
+          POSTGRES_DB: finai
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U finai -d finai"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check app tests alembic
+
+      - name: Comprobar que las migraciones describen el modelo actual
+        # Si alguien cambia un modelo y olvida la migración, autogenerate
+        # detectaría diferencias: aquí se falla antes de llegar a producción.
+        env:
+          DATABASE_URL: postgresql+asyncpg://finai:finai@localhost:5432/finai
+        run: |
+          alembic upgrade head
+          alembic check
+
+      - name: Tests sobre SQLite
+        run: pytest -q
+
+      - name: Tests sobre PostgreSQL y Redis reales
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://finai:finai@localhost:5432/finai
+          TEST_REDIS_URL: redis://localhost:6379/0
+        run: pytest -q
+
+      - name: Comprobar que la imagen se construye
+        run: docker build -t finai-gateway:ci .

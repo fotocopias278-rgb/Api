@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -13,8 +14,7 @@ from app.core.config import settings as default_settings
 from app.core.exceptions import ConflictError, GatewayError, NotFoundError
 from app.db.models import FraudAssessment, Payment
 from app.db.models.payment import new_reference
-from app.schemas.enums import PaymentStatus, RiskDecision
-from app.schemas.fraud import FraudEvaluationResponse
+from app.schemas.enums import PaymentMethod, PaymentStatus, RiskDecision
 from app.schemas.payment import PaymentCreate
 from app.services.fraud import FraudContext, FraudEngine, fraud_engine
 from app.services.stripe_gateway import StripeGateway, stripe_gateway
@@ -118,15 +118,31 @@ class PaymentService:
             status=self._initial_status(assessment.decision),
             meta=data.meta,
         )
-        payment.assessments.append(_to_model(assessment))
+        payment.assessments.append(FraudAssessment.from_evaluation(assessment))
         self._session.add(payment)
-        await self._session.flush()
 
-        if assessment.decision is RiskDecision.APPROVE:
-            await self._authorize(payment)
+        # Se persiste y se confirma ANTES de hablar con la pasarela, por dos
+        # razones: no mantener una transacción abierta durante una llamada de
+        # red (agota el pool bajo carga), y liberar cuanto antes el bloqueo
+        # sobre el índice único de la clave de idempotencia.
+        try:
+            await self._session.commit()
+        except IntegrityError:
+            await self._session.rollback()
+            duplicado = await self._resolve_idempotency_conflict(idempotency_key)
+            if duplicado is None:
+                raise
+            return duplicado
 
-        await self._session.commit()
         await self._session.refresh(payment)
+
+        # Una transferencia no se cobra por la pasarela: el cliente envía el
+        # dinero por su banco y lo que la liquida es el comprobante conciliado.
+        # Crear aquí un PaymentIntent abriría un cobro con tarjeta paralelo.
+        if assessment.decision is RiskDecision.APPROVE and payment.method is PaymentMethod.CARD:
+            await self._authorize(payment)
+            await self._session.commit()
+            await self._session.refresh(payment)
 
         logger.info(
             "payment.created",
@@ -201,7 +217,13 @@ class PaymentService:
             )
 
         if approve:
-            await self._authorize(payment)
+            if payment.method is PaymentMethod.BANK_TRANSFER:
+                # En una transferencia el dinero ya llegó y el comprobante es la
+                # prueba: crear un cobro en la pasarela cobraría por segunda vez.
+                payment.status = PaymentStatus.SUCCEEDED
+                payment.settled_at = datetime.now(UTC)
+            else:
+                await self._authorize(payment)
         else:
             payment.status = PaymentStatus.REJECTED
             payment.failure_reason = "Rechazado en revisión manual."
@@ -211,6 +233,19 @@ class PaymentService:
         return payment
 
     # --- Consultas ----------------------------------------------------------
+
+    async def _resolve_idempotency_conflict(self, key: str | None) -> Payment | None:
+        """Recupera el pago que ganó la carrera por la clave de idempotencia.
+
+        Cuando dos peticiones simultáneas usan la misma clave, la perdedora
+        choca contra el índice único. Para entonces la ganadora ya confirmó
+        —el índice bloquea hasta el commit—, así que basta con releerlo y
+        devolver ese mismo pago: es justo lo que pedía el cliente al reintentar.
+        Si no aparece, el conflicto era otro y se propaga.
+        """
+        if key is None:
+            return None
+        return await self.get_by_idempotency_key(key)
 
     async def get_by_reference(self, reference: str) -> Payment | None:
         result = await self._session.execute(
@@ -257,11 +292,3 @@ class PaymentService:
             RiskDecision.REJECT: PaymentStatus.REJECTED,
         }[decision]
 
-
-def _to_model(assessment: FraudEvaluationResponse) -> FraudAssessment:
-    return FraudAssessment(
-        score=assessment.score,
-        decision=assessment.decision,
-        engine_version=assessment.engine_version,
-        signals=[signal.model_dump() for signal in assessment.signals],
-    )
