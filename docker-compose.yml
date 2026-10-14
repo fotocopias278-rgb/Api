@@ -2,6 +2,9 @@ services:
   db:
     image: postgres:16-alpine
     environment:
+      # Credenciales de desarrollo local: este servicio no se expone fuera de
+      # la red de compose. En producción se usa una base gestionada y
+      # DATABASE_URL, nunca este contenedor.
       POSTGRES_USER: finai
       POSTGRES_PASSWORD: finai
       POSTGRES_DB: finai

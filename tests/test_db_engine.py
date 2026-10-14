@@ -5,9 +5,12 @@ from sqlalchemy.pool import NullPool
 from app.core.config import Settings, get_settings
 from app.db.session import build_engine, engine_kwargs, usa_pooler_de_transacciones
 
-POOLER = ("postgresql+asyncpg://u:c@ep-blue-mode-ae56za91-pooler.c-2.us-east-2."
+# Hostnames ficticios con la forma que usa Neon: lo que se comprueba es el
+# sufijo `-pooler`, no un endpoint concreto, y publicar el real daría a
+# cualquiera un objetivo contra el que probar credenciales.
+POOLER = ("postgresql+asyncpg://usuario:clave@ep-ejemplo-00000000-pooler.c-2.us-east-2."
           "aws.neon.tech/neondb?ssl=require")
-DIRECTO = ("postgresql+asyncpg://u:c@ep-blue-mode-ae56za91.c-2.us-east-2."
+DIRECTO = ("postgresql+asyncpg://usuario:clave@ep-ejemplo-00000000.c-2.us-east-2."
            "aws.neon.tech/neondb?ssl=require")
 
 

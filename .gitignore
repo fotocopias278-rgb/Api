@@ -14,6 +14,9 @@ venv/
 htmlcov/
 *.db
 *.sqlite3
+
+# Comprobantes subidos en local: son documentos bancarios de clientes.
+var/
 .DS_Store
 .idea/
 .vscode/
