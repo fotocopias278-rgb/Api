@@ -16,3 +16,9 @@ var/
 htmlcov/
 .coverage
 README.md
+
+# Artefactos de Node: este runtime es solo Python.
+node_modules/
+package*.json
+skills-lock.json
+neon.ts

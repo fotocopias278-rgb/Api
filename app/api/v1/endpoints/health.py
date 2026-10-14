@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app import __version__
 from app.api.deps import SessionDep, SettingsDep
 from app.schemas.common import HealthResponse
+from app.services.vision import StubVisionProvider, get_vision_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["salud"])
@@ -53,7 +54,13 @@ async def readiness(
             checks["redis"] = "error"
 
     checks["stripe"] = "configured" if settings.stripe_api_key else "simulated"
-    checks["vision"] = "configured" if settings.anthropic_api_key else "stub"
+    # Se pregunta a la fábrica en vez de mirar una sola credencial: así la
+    # sonda refleja el proveedor que de verdad se usaría —Gemini incluido— y no
+    # vuelve a quedarse obsoleta cada vez que se añada uno nuevo.
+    proveedor = get_vision_provider(settings)
+    checks["vision"] = (
+        "stub" if isinstance(proveedor, StubVisionProvider) else "configured"
+    )
 
     healthy = checks["database"] == "ok"
     if not healthy:

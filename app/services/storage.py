@@ -16,7 +16,7 @@ from botocore.exceptions import ClientError
 
 from app.core.config import Settings
 from app.core.config import settings as default_settings
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 
 
 class ReceiptStorage(Protocol):
@@ -34,14 +34,29 @@ class LocalFileStorage:
         # revienta con 500 en cualquier despliegue que no fije la variable.
         self._root = Path(cfg.receipt_storage_dir).expanduser().resolve()
 
+    def _ruta_segura(self, destino: Path) -> Path:
+        """Garantiza que la ruta cae dentro del directorio raíz.
+
+        Última barrera contra el escape de directorio: aunque la clave venga ya
+        saneada, aquí se resuelve la ruta real —siguiendo `..` y enlaces— y se
+        comprueba la pertenencia. Es barato y cierra la clase entera de fallo.
+        """
+        resuelta = destino.resolve()
+        if not resuelta.is_relative_to(self._root):
+            raise ValidationError(
+                "La ruta del fichero escapa del directorio de almacenamiento.",
+                details={"root": str(self._root)},
+            )
+        return resuelta
+
     async def save(self, key: str, content: bytes) -> str:
-        path = self._root / key
+        path = self._ruta_segura(self._root / key)
         # El I/O de disco es bloqueante: fuera del bucle de eventos.
         await asyncio.to_thread(self._write, path, content)
         return path.as_uri()
 
     async def load(self, uri: str) -> bytes:
-        path = Path(uri.removeprefix("file://"))
+        path = self._ruta_segura(Path(uri.removeprefix("file://")))
         try:
             return await asyncio.to_thread(path.read_bytes)
         except FileNotFoundError as exc:

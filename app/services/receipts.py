@@ -6,12 +6,13 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import NotFoundError, ValidationError, VisionExtractionError
+from app.core.files import safe_filename, verify_file_signature
 from app.core.security import sha256_hexdigest
 from app.db.models import FraudAssessment, Merchant, Payment, Receipt
 from app.db.models.endpoint import EventType
@@ -80,6 +81,8 @@ class ReceiptService:
             )
         if not content:
             raise ValidationError("El fichero está vacío.")
+        # El Content-Type lo elige quien sube el fichero: hay que mirar los bytes.
+        verify_file_signature(content, content_type)
         if len(content) > self._settings.receipt_max_bytes:
             raise ValidationError(
                 "El fichero supera el tamaño máximo permitido.",
@@ -110,7 +113,7 @@ class ReceiptService:
         receipt = Receipt(
             merchant_id=self._merchant.id,
             payment_id=payment.id if payment else None,
-            filename=filename[:255],
+            filename=safe_filename(filename),
             content_type=content_type,
             size_bytes=len(content),
             content_sha256=digest,
@@ -166,6 +169,7 @@ class ReceiptService:
         )
         receipt.status = ReceiptStatus.EXTRACTED
         receipt.extraction = extraction.model_dump(mode="json")
+        receipt.operation_number = extraction.operation_number
         receipt.confidence = extraction.confidence
         await self._apply_reconciliation(receipt, extraction)
 
@@ -295,22 +299,24 @@ class ReceiptService:
         if not extraction.operation_number:
             return False
 
-        rows = await self._session.execute(
-            select(Receipt).where(
+        # Una sola consulta indexada en vez de traerse a memoria todos los
+        # comprobantes del comercio y compararlos en Python: con un cliente
+        # activo esa lista crece sin límite y acaba dominando el tiempo de
+        # conciliación. El índice (merchant_id, operation_number) la resuelve.
+        existe = await self._session.scalar(
+            select(literal(1))
+            .select_from(Receipt)
+            .where(
                 Receipt.merchant_id == self._merchant.id,
+                Receipt.operation_number == extraction.operation_number,
                 Receipt.id != receipt.id,
                 Receipt.status == ReceiptStatus.EXTRACTED,
                 Receipt.payment_id.is_not(None),
+                Receipt.payment_id != receipt.payment_id,
             )
+            .limit(1)
         )
-        for other in rows.scalars():
-            other_op = (other.extraction or {}).get("operation_number")
-            if (
-                other_op == extraction.operation_number
-                and other.payment_id != receipt.payment_id
-            ):
-                return True
-        return False
+        return existe is not None
 
     def _clave_de_almacenamiento(self, receipt: Receipt) -> str:
         """Ruta del fichero, separada por comercio.
@@ -319,7 +325,10 @@ class ReceiptService:
         ficheros de cada cliente bajo su propio prefijo, que es lo que permite
         borrarlos o exportarlos en bloque si se da de baja.
         """
-        return f"{self._merchant.id}/{receipt.id}/{receipt.filename}"
+        # El nombre ya viene saneado de `register`, pero se vuelve a pasar por
+        # el saneador: esta clave acaba siendo una ruta en disco o en S3, y la
+        # defensa tiene que estar donde se construye, no solo donde se recibe.
+        return f"{self._merchant.id}/{receipt.id}/{safe_filename(receipt.filename)}"
 
     async def _get_own(self, receipt_id: uuid.UUID) -> Receipt:
         """Carga un comprobante propio, o 404 si es de otro comercio."""

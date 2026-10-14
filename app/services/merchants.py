@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,14 @@ from app.core.security import generate_api_key, hash_api_key, key_prefix
 from app.db.models import ApiKey, Merchant
 
 logger = logging.getLogger(__name__)
+
+# Cada cuánto se refresca `last_used_at`. Ver `resolve_key`.
+_RESOLUCION_USO = timedelta(seconds=60)
+
+
+def _con_zona(momento: datetime) -> datetime:
+    """SQLite devuelve datetimes sin zona; restarlos de uno aware lanza TypeError."""
+    return momento if momento.tzinfo else momento.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +104,15 @@ class MerchantService:
             )
             return None
 
-        api_key.last_used_at = datetime.now(UTC)
-        await self._session.commit()
+        # `last_used_at` sirve para detectar claves muertas, no para auditar
+        # cada petición: refrescarlo siempre convertía toda lectura autenticada
+        # en una escritura a disco. Con resolución de un minuto cumple su fin.
+        ahora = datetime.now(UTC)
+        ultimo = api_key.last_used_at
+        if ultimo is None or (ahora - _con_zona(ultimo)) > _RESOLUCION_USO:
+            api_key.last_used_at = ahora
+            await self._session.commit()
+
         return api_key.merchant
 
     async def get_merchant(self, merchant_id: uuid.UUID) -> Merchant:

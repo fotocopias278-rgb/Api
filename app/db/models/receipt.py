@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Enum, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -43,9 +43,20 @@ class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
 
+    # Se materializa fuera del JSON de extracción porque es la clave por la que
+    # se busca un justificante reutilizado: dentro del JSON no hay índice que
+    # valga y había que recorrer todos los comprobantes del comercio.
+    operation_number: Mapped[str | None] = mapped_column(
+        String(128), default=None, index=True
+    )
     extraction: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     confidence: Mapped[float | None] = mapped_column(Float, default=None)
     reconciliation_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
     error_message: Mapped[str | None] = mapped_column(String(512), default=None)
 
     payment: Mapped[Payment | None] = relationship(back_populates="receipts", lazy="selectin")
+
+    __table_args__ = (
+        # La búsqueda de duplicados siempre es "este comercio, este número".
+        Index("ix_receipts_merchant_operation", "merchant_id", "operation_number"),
+    )

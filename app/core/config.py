@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     vision_provider: Literal["auto", "anthropic", "gemini"] = "auto"
     anthropic_api_key: str | None = None
     google_api_key: str | None = None
+    # Identificadores verificados contra las APIs oficiales, no copiados de
+    # documentación: `gemini-2.5-flash` responde 404 ("no longer available to
+    # new users") y los identificadores de Claude no llevan sufijo de fecha.
+    # Al cambiarlos, compruébalos con `make smoke-vision` antes de desplegar.
     gemini_model: str = "gemini-3.5-flash"
     vision_model: str = "claude-opus-5"
     vision_max_tokens: int = 8000

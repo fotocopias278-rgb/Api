@@ -38,3 +38,30 @@ async def test_leer_un_fichero_inexistente(tmp_path):
     storage = LocalFileStorage(ajustes(str(tmp_path)))
     with pytest.raises(NotFoundError):
         await storage.load(f"file://{tmp_path}/no-existe.png")
+
+
+async def test_una_clave_con_escape_de_directorio_se_rechaza(tmp_path):
+    """Última barrera: aunque la clave viniera sin sanear, no sale de la raíz."""
+    from app.core.exceptions import ValidationError
+
+    storage = LocalFileStorage(ajustes(str(tmp_path / "comprobantes")))
+    with pytest.raises(ValidationError, match="escapa del directorio"):
+        await storage.save("../../escape.png", b"datos")
+
+
+async def test_no_se_puede_leer_fuera_de_la_raiz(tmp_path):
+    from app.core.exceptions import ValidationError
+
+    secreto = tmp_path / "secreto.txt"
+    secreto.write_text("contenido privado")
+    storage = LocalFileStorage(ajustes(str(tmp_path / "comprobantes")))
+
+    with pytest.raises(ValidationError, match="escapa del directorio"):
+        await storage.load(f"file://{secreto}")
+
+
+async def test_el_fichero_escrito_queda_dentro_de_la_raiz(tmp_path):
+    raiz = tmp_path / "comprobantes"
+    storage = LocalFileStorage(ajustes(str(raiz)))
+    uri = await storage.save("comercio/recibo.png", b"datos")
+    assert str(raiz.resolve()) in uri
