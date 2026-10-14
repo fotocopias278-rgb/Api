@@ -1,9 +1,23 @@
 """Modelos relacionales del gateway."""
 
+from app.db.models.endpoint import EventType, WebhookDelivery, WebhookEndpoint
 from app.db.models.fraud import FraudAssessment
 from app.db.models.merchant import ApiKey, Merchant
 from app.db.models.payment import Payment
 from app.db.models.receipt import Receipt
+from app.db.models.usage import UsageEvent, UsageKind
 from app.db.models.webhook import WebhookEvent
 
-__all__ = ["ApiKey", "FraudAssessment", "Merchant", "Payment", "Receipt", "WebhookEvent"]
+__all__ = [
+    "ApiKey",
+    "EventType",
+    "FraudAssessment",
+    "Merchant",
+    "Payment",
+    "Receipt",
+    "UsageEvent",
+    "UsageKind",
+    "WebhookDelivery",
+    "WebhookEndpoint",
+    "WebhookEvent",
+]

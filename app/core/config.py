@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # Si Redis cae: True deja pasar el tráfico, False lo rechaza con 429.
     rate_limit_fail_open: bool = True
 
+    # --- Webhooks salientes ---
+    webhook_timeout_seconds: float = 10.0
+
     # --- Motor de fraude ---
     fraud_review_threshold: int = 40
     fraud_reject_threshold: int = 75
@@ -85,6 +88,14 @@ class Settings(BaseSettings):
     reconciliation_auto_settle: bool = False
     receipt_max_bytes: int = 10 * 1024 * 1024
     receipt_storage_dir: str = "./var/receipts"
+    # `local` guarda en disco (desarrollo); `s3` en cualquier servicio
+    # compatible: AWS, Cloudflare R2, Backblaze B2, MinIO.
+    receipt_storage_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str | None = None
+    s3_endpoint_url: str | None = None  # vacío = AWS; si no, R2/B2/MinIO
+    s3_region: str = "auto"
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
     # `celery`: la extracción va a la cola y la ejecuta un worker aparte (lo
     # adecuado en producción, porque aísla el gasto de IA del tráfico web).
     # `inline`: la ejecuta el propio proceso web tras responder. Permite
@@ -146,6 +157,18 @@ class Settings(BaseSettings):
             )
         if not self.rate_limit_enabled:
             avisos.append("RATE_LIMIT_ENABLED=false: la API queda sin limitación de tasa.")
+        if self.receipt_storage_backend == "s3" and not (
+            self.s3_bucket and self.s3_access_key_id and self.s3_secret_access_key
+        ):
+            errores.append(
+                "RECEIPT_STORAGE_BACKEND=s3 sin bucket o credenciales: no se podrían "
+                "guardar los comprobantes."
+            )
+        if self.receipt_storage_backend == "local":
+            avisos.append(
+                "RECEIPT_STORAGE_BACKEND=local: los comprobantes se pierden al reiniciar "
+                "y no se comparten entre réplicas."
+            )
         if self.receipt_processing_mode == "inline":
             avisos.append(
                 "RECEIPT_PROCESSING_MODE=inline: la extracción comparte proceso con el "

@@ -14,6 +14,8 @@ from app.core.config import settings as default_settings
 from app.core.exceptions import NotFoundError, ValidationError, VisionExtractionError
 from app.core.security import sha256_hexdigest
 from app.db.models import FraudAssessment, Merchant, Payment, Receipt
+from app.db.models.endpoint import EventType
+from app.db.models.usage import UsageKind
 from app.schemas.enums import (
     PaymentMethod,
     PaymentStatus,
@@ -24,8 +26,10 @@ from app.schemas.enums import (
 from app.schemas.receipt import ReconciliationResult
 from app.schemas.vision import ReceiptExtraction
 from app.services.fraud import FraudEngine, fraud_engine
+from app.services.notifications import NotificationService
 from app.services.reconciliation import reconcile
 from app.services.storage import ReceiptStorage, get_receipt_storage
+from app.services.usage import UsageService
 from app.services.vision import SUPPORTED_MEDIA_TYPES, VisionProvider, get_vision_provider
 
 logger = logging.getLogger(__name__)
@@ -116,7 +120,13 @@ class ReceiptService:
         # Se vuelca primero para disponer del id, que da nombre al fichero.
         await self._session.flush()
         receipt.storage_uri = await self._storage.save(
-            f"{receipt.id}/{receipt.filename}", content
+            self._clave_de_almacenamiento(receipt), content
+        )
+        await UsageService(self._session).record(
+            self._merchant.id,
+            UsageKind.RECEIPT_UPLOADED,
+            meta={"bytes": len(content)},
+            commit=False,
         )
         await self._session.commit()
         await self._session.refresh(receipt)
@@ -146,6 +156,14 @@ class ReceiptService:
             )
             return receipt
 
+        # La extracción consumió una llamada al modelo: es lo más caro que
+        # hace la plataforma y lo que más sentido tiene repercutir.
+        await UsageService(self._session).record(
+            self._merchant.id,
+            UsageKind.VISION_EXTRACTION,
+            meta={"confianza": extraction.confidence},
+            commit=False,
+        )
         receipt.status = ReceiptStatus.EXTRACTED
         receipt.extraction = extraction.model_dump(mode="json")
         receipt.confidence = extraction.confidence
@@ -153,7 +171,22 @@ class ReceiptService:
 
         await self._session.commit()
         await self._session.refresh(receipt)
+        await self._avisar_conciliado(receipt)
         return receipt
+
+    async def _avisar_conciliado(self, receipt: Receipt) -> None:
+        """Notifica el veredicto para que el comercio no tenga que sondear."""
+        await NotificationService(self._session, config=self._settings).emit(
+            self._merchant.id,
+            EventType.RECEIPT_RECONCILED,
+            {
+                "receipt_id": str(receipt.id),
+                "status": str(receipt.status),
+                "reconciliation_status": str(receipt.reconciliation_status),
+                "payment_id": str(receipt.payment_id) if receipt.payment_id else None,
+                "notes": receipt.reconciliation_notes,
+            },
+        )
 
     async def _apply_reconciliation(self, receipt: Receipt, extraction: ReceiptExtraction) -> None:
         """Concilia contra el pago asociado, si lo hay."""
@@ -271,6 +304,15 @@ class ReceiptService:
             ):
                 return True
         return False
+
+    def _clave_de_almacenamiento(self, receipt: Receipt) -> str:
+        """Ruta del fichero, separada por comercio.
+
+        Importa aunque el contenido ya esté aislado en la base: deja los
+        ficheros de cada cliente bajo su propio prefijo, que es lo que permite
+        borrarlos o exportarlos en bloque si se da de baja.
+        """
+        return f"{self._merchant.id}/{receipt.id}/{receipt.filename}"
 
     async def _get_own(self, receipt_id: uuid.UUID) -> Receipt:
         """Carga un comprobante propio, o 404 si es de otro comercio."""

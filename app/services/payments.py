@@ -13,11 +13,15 @@ from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import ConflictError, GatewayError, NotFoundError
 from app.db.models import FraudAssessment, Merchant, Payment
+from app.db.models.endpoint import EventType
 from app.db.models.payment import new_reference
+from app.db.models.usage import UsageKind
 from app.schemas.enums import PaymentMethod, PaymentStatus, RiskDecision
 from app.schemas.payment import PaymentCreate
 from app.services.fraud import FraudContext, FraudEngine, fraud_engine
+from app.services.notifications import NotificationService
 from app.services.stripe_gateway import StripeGateway, stripe_gateway
+from app.services.usage import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +133,15 @@ class PaymentService:
         )
         payment.assessments.append(FraudAssessment.from_evaluation(assessment))
         self._session.add(payment)
+        # El hecho facturable viaja en la misma transacción que el pago: o se
+        # guardan los dos, o ninguno. Facturar algo que no ocurrió, o dejar de
+        # facturar algo que sí, son igual de malos.
+        await UsageService(self._session).record(
+            self._merchant.id,
+            UsageKind.PAYMENT_CREATED,
+            meta={"currency": data.currency},
+            commit=False,
+        )
 
         # Se persiste y se confirma ANTES de hablar con la pasarela, por dos
         # razones: no mantener una transacción abierta durante una llamada de
@@ -153,6 +166,7 @@ class PaymentService:
             await self._session.commit()
             await self._session.refresh(payment)
 
+        await self._avisar(payment)
         logger.info(
             "payment.created",
             extra={
@@ -163,6 +177,21 @@ class PaymentService:
             },
         )
         return payment
+
+    async def _avisar(self, payment: Payment) -> None:
+        """Emite `payment.updated` hacia los destinos del comercio."""
+        await NotificationService(self._session, config=self._settings).emit(
+            self._merchant.id,
+            EventType.PAYMENT_UPDATED,
+            {
+                "reference": payment.reference,
+                "status": str(payment.status),
+                "amount_minor": payment.amount_minor,
+                "currency": payment.currency,
+                "risk_score": payment.risk_score,
+                "risk_decision": str(payment.risk_decision) if payment.risk_decision else None,
+            },
+        )
 
     async def _authorize(self, payment: Payment) -> None:
         """Envía el cobro a la pasarela y refleja el resultado en el pago."""
@@ -212,6 +241,7 @@ class PaymentService:
         payment.status = PaymentStatus.REFUNDED
         await self._session.commit()
         await self._session.refresh(payment)
+        await self._avisar(payment)
         return payment
 
     async def mark_under_review_decision(self, reference: str, approve: bool) -> Payment:
@@ -239,6 +269,7 @@ class PaymentService:
 
         await self._session.commit()
         await self._session.refresh(payment)
+        await self._avisar(payment)
         return payment
 
     # --- Consultas ----------------------------------------------------------

@@ -1,8 +1,8 @@
 """Almacenamiento de los ficheros de comprobante.
 
-La implementación por defecto escribe en disco local. Para producción basta con
-sustituirla por una que hable con S3/GCS respetando el mismo protocolo: el resto
-del código solo conoce `storage_uri`.
+Dos implementaciones tras el mismo protocolo: disco local para desarrollo y
+S3 —o cualquier servicio compatible— para producción. El resto del código solo
+conoce `storage_uri`, así que cambiar de una a otra no toca nada más.
 """
 
 from __future__ import annotations
@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Protocol
+
+import aioboto3
+from botocore.exceptions import ClientError
 
 from app.core.config import Settings
 from app.core.config import settings as default_settings
@@ -50,5 +53,51 @@ class LocalFileStorage:
         path.write_bytes(content)
 
 
+class S3Storage:
+    """Almacenamiento en cualquier servicio compatible con S3.
+
+    Vale igual para AWS, Cloudflare R2, Backblaze B2 o MinIO: solo cambia
+    `S3_ENDPOINT_URL`. Es lo que permite más de una réplica —el disco local no
+    se comparte— y que un reinicio no se lleve los comprobantes por delante.
+    """
+
+    def __init__(self, config: Settings | None = None) -> None:
+        cfg = config or default_settings
+        if not cfg.s3_bucket:
+            raise ValueError("S3_BUCKET es obligatorio con el almacenamiento S3.")
+        self._bucket = cfg.s3_bucket
+        self._session = aioboto3.Session(
+            aws_access_key_id=cfg.s3_access_key_id,
+            aws_secret_access_key=cfg.s3_secret_access_key,
+            region_name=cfg.s3_region,
+        )
+        self._endpoint = cfg.s3_endpoint_url
+
+    def _cliente(self):
+        return self._session.client("s3", endpoint_url=self._endpoint)
+
+    async def save(self, key: str, content: bytes) -> str:
+        async with self._cliente() as s3:
+            await s3.put_object(Bucket=self._bucket, Key=key, Body=content)
+        return f"s3://{self._bucket}/{key}"
+
+    async def load(self, uri: str) -> bytes:
+        bucket, _, key = uri.removeprefix("s3://").partition("/")
+        async with self._cliente() as s3:
+            try:
+                respuesta = await s3.get_object(Bucket=bucket, Key=key)
+            except ClientError as exc:
+                # Un objeto ausente es un 404 del dominio, no un fallo del
+                # proveedor: quien llama ya sabe tratarlo.
+                if exc.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
+                    raise NotFoundError(f"No se encontró el fichero {uri}.") from exc
+                raise
+            return await respuesta["Body"].read()
+
+
 def get_receipt_storage(config: Settings | None = None) -> ReceiptStorage:
-    return LocalFileStorage(config)
+    """Elige el almacén según la configuración."""
+    cfg = config or default_settings
+    if cfg.receipt_storage_backend == "s3":
+        return S3Storage(cfg)
+    return LocalFileStorage(cfg)
