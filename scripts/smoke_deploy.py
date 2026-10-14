@@ -48,20 +48,43 @@ def barra(titulo: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verifica un despliegue de FinAI Gateway.")
     parser.add_argument("url", help="URL base del servicio, p. ej. https://x.onrender.com")
-    parser.add_argument("--api-key", default=os.environ.get("API_KEY"), help="Clave de API.")
+    parser.add_argument("--api-key", default=os.environ.get("API_KEY"),
+                        help="Clave de un comercio. Si falta, se crea uno con --admin-key.")
+    parser.add_argument("--admin-key", default=os.environ.get("ADMIN_KEY"),
+                        help="Clave de administración, para dar de alta un comercio de prueba.")
     parser.add_argument("--timeout", type=float, default=90.0,
                         help="El plan gratuito tarda en despertar.")
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("✗ Falta la clave: pásala con --api-key o en la variable API_KEY.")
+    if not args.api_key and not args.admin_key:
+        print("✗ Pasa --api-key (comercio) o --admin-key (para crear uno de prueba).")
         return 1
 
     base = args.url.rstrip("/") + "/api/v1"
-    cabeceras = {"X-API-Key": args.api_key}
+    cabeceras = {"X-API-Key": args.api_key or ""}
     inf = Informe()
 
     with httpx.Client(timeout=args.timeout, follow_redirects=True) as cli:
+        # Si solo hay clave de administración, se crea un comercio desechable:
+        # así el verificador no exige haber dado de alta nada antes.
+        if not args.api_key:
+            barra("0. Se da de alta un comercio de prueba")
+            alta = cli.post(
+                f"{base}/admin/merchants",
+                json={"name": "Verificación de despliegue"},
+                headers={"X-Admin-Key": args.admin_key},
+            )
+            if alta.status_code != 201:
+                inf.error(f"no se pudo crear el comercio ({alta.status_code})", alta.text[:160])
+                return 1
+            emision = cli.post(
+                f"{base}/admin/merchants/{alta.json()['id']}/keys",
+                json={"name": "verificacion"},
+                headers={"X-Admin-Key": args.admin_key},
+            )
+            args.api_key = emision.json()["secret"]
+            inf.ok("comercio y clave creados", alta.json()["id"])
+            cabeceras["X-API-Key"] = args.api_key
         # --- Salud ---
         barra("1. El servicio responde")
         try:
@@ -189,6 +212,20 @@ def main() -> int:
 
         final = cli.get(f"{base}/payments/{referencia}", headers=cabeceras).json()
         print(f"  → el pago quedó en {NEGRITA}{final['status']}{FIN}")
+
+        # --- Consumo ---
+        barra("6. El consumo queda medido para facturar")
+        consumo = cli.get(f"{base}/usage", headers=cabeceras)
+        if consumo.status_code == 200:
+            totales = consumo.json()["totals"]
+            inf.ok("se contabilizó el cobro", f"{totales.get('payment_created')} unidad(es)")
+            inf.ok("se contabilizó el comprobante", f"{totales.get('receipt_uploaded')}")
+            if not vision_stub:
+                (inf.ok if totales.get("vision_extraction") else inf.error)(
+                    "se contabilizó la extracción", str(totales.get("vision_extraction"))
+                )
+        else:
+            inf.error(f"/usage devolvió {consumo.status_code}")
 
     barra("Resultado")
     if inf.fallos:

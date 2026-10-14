@@ -195,7 +195,14 @@ class ReceiptService:
             receipt.reconciliation_notes = ["Comprobante sin pago asociado."]
             return
 
-        payment = await self._session.get(Payment, receipt.payment_id)
+        # Se vuelve a exigir el comercio aunque el comprobante ya esté acotado:
+        # es una comprobación redundante hoy, y la red que evita que un fallo
+        # futuro en la asociación acabe conciliando contra un pago ajeno.
+        payment = await self._session.scalar(
+            select(Payment).where(
+                Payment.merchant_id == self._merchant.id, Payment.id == receipt.payment_id
+            )
+        )
         if payment is None:  # pragma: no cover - protegido por clave foránea
             receipt.reconciliation_status = ReconciliationStatus.PENDING
             receipt.reconciliation_notes = ["El pago asociado ya no existe."]

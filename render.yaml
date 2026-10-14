@@ -20,9 +20,10 @@ services:
       - key: RECEIPT_PROCESSING_MODE
         value: inline
 
-      # Render genera una clave aleatoria en el primer despliegue.
-      # Consúltala en el panel: Environment -> API_KEYS.
-      - key: API_KEYS
+      # Render genera la clave de administración en el primer despliegue.
+      # Consúltala en el panel: Environment -> ADMIN_API_KEYS. Con ella se dan
+      # de alta los comercios; las claves de cada cliente se emiten por API.
+      - key: ADMIN_API_KEYS
         generateValue: true
 
       # Estas tres se rellenan a mano en el panel (Postgres y Redis gestionados
@@ -46,3 +47,17 @@ services:
         value: "120"
       - key: RECONCILIATION_AUTO_SETTLE
         value: "false"
+
+      # El disco de Render es efímero: en cuanto haya tráfico real, pasa a s3
+      # y rellena estas cuatro. Con una sola réplica y modo inline funciona
+      # igualmente en local, pero los ficheros no sobreviven a un reinicio.
+      - key: RECEIPT_STORAGE_BACKEND
+        value: local
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false

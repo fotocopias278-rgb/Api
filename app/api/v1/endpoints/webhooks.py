@@ -88,6 +88,10 @@ async def _apply_event(session: SessionDep, event_type: str, event: dict[str, An
     if not provider_id:
         return False
 
+    # Deliberadamente sin filtro de comercio: Stripe notifica a la plataforma,
+    # no a un inquilino, y la petición no trae clave de API con la que acotar.
+    # Lo que la hace segura es la firma HMAC verificada antes de llegar aquí,
+    # más que `provider_payment_id` es único en toda la tabla.
     payment = await session.scalar(
         select(Payment).where(Payment.provider_payment_id == provider_id)
     )

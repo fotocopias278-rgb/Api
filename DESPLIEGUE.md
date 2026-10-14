@@ -65,8 +65,21 @@ Crea una base Redis y copia la URL `rediss://...` (con dos eses: va cifrada).
    `DATABASE_URL`, `REDIS_URL` y la clave del proveedor de visión
    (`GOOGLE_API_KEY` para Gemini, que tiene plan gratuito, o
    `ANTHROPIC_API_KEY` para Claude; basta con una).
-3. Copia el valor que Render generó para `API_KEYS`: es la clave con la que se
-   autenticará tu aplicación.
+3. Copia el valor que Render generó para `ADMIN_API_KEYS`: es tu clave de
+   administración, no la de tus clientes.
+4. Da de alta tu primer comercio y guarda **su** clave, que es la que entregas
+   al cliente:
+
+   ```bash
+   curl -X POST https://TU-APP.onrender.com/api/v1/admin/merchants \
+     -H "X-Admin-Key: $ADMIN" -H "Content-Type: application/json" \
+     -d '{"name": "Mi Primer Cliente"}'
+
+   curl -X POST https://TU-APP.onrender.com/api/v1/admin/merchants/$ID/keys \
+     -H "X-Admin-Key: $ADMIN" -H "Content-Type: application/json" -d '{}'
+   ```
+
+   El secreto se muestra **una sola vez**.
 
 Las migraciones se aplican solas al arrancar.
 
@@ -77,7 +90,14 @@ recorre el camino completo —salud, autenticación, pago, subida del comprobant
 extracción con IA y conciliación— contra el servicio ya desplegado:
 
 ```bash
-make smoke-deploy URL=https://TU-APP.onrender.com API_KEY=la-clave-de-render
+make smoke-deploy URL=https://TU-APP.onrender.com API_KEY=la-clave-del-comercio
+```
+
+Si aún no has dado de alta ningún comercio, pásale la de administración y lo
+crea él solo para la prueba:
+
+```bash
+python scripts/smoke_deploy.py https://TU-APP.onrender.com --admin-key $ADMIN
 ```
 
 Distingue fallos de avisos: si aún no has puesto la clave de IA, marcará la
@@ -99,11 +119,11 @@ Debe responder `database: ok` y `redis: ok`.
 - **El servicio se duerme** tras un rato sin tráfico. La primera petición
   después tarda cerca de un minuto. Para pruebas es irrelevante; para
   producción, no.
-- **El disco es efímero.** Los ficheros de los comprobantes se pierden al
-  reiniciar. En modo `inline` da igual para el análisis —ocurre segundos
-  después de la subida— pero no podrás reanalizar uno antiguo. La solución
-  es implementar `ReceiptStorage` contra S3: el punto de extensión ya está
-  en `app/services/storage.py`.
+- **El disco es efímero.** Los ficheros se pierden al reiniciar y no se
+  comparten entre réplicas. Para producción de verdad pon
+  `RECEIPT_STORAGE_BACKEND=s3` y las cuatro variables `S3_*`: vale AWS,
+  Cloudflare R2, Backblaze B2 o MinIO, y R2 tiene plan gratuito con egreso sin
+  coste. El arranque avisa en el log mientras sigas en `local`.
 - **La extracción compite con el tráfico web** por la CPU del mismo proceso.
   Con volumen real, pasa a plan de pago y separa el worker de Celery.
 

@@ -80,15 +80,95 @@ deja siempre traza en el log de que no se ha movido dinero real.
 
 ---
 
-## 🔐 Autenticación
+## 🏢 Multi-inquilino
 
-Todas las rutas salvo `/health*` y el webhook exigen la cabecera `X-API-Key`,
-contrastada en tiempo constante contra `API_KEYS`. El webhook de Stripe se
-autentica con su firma HMAC, no con la clave de API.
+La API sirve a varios comercios a la vez y **cada uno solo ve lo suyo**. Esa
+separación no es una comprobación que haya que recordar escribir: la dependencia
+de autenticación devuelve el *comercio*, no la clave, y los servicios lo exigen
+en el constructor sin valor por defecto. Una consulta sin inquilino falla al
+instanciarse, no en producción sirviendo datos ajenos.
+
+| Credencial | Cabecera | Para qué |
+|---|---|---|
+| Administración | `X-Admin-Key` | Dar de alta comercios y emitir sus claves |
+| Comercio | `X-API-Key` | Todo lo demás: cobros, comprobantes, consumo |
+
+De las claves de comercio solo se guarda su **huella SHA-256**: una filtración de
+la base de datos no entrega credenciales utilizables, y el secreto se enseña una
+única vez al emitirlo. Si se pierde, se revoca y se emite otro.
+
+> Se usa SHA-256 y no bcrypt o argon2 a propósito: una clave de API ya tiene 256
+> bits aleatorios, así que no hay diccionario que atacar, y en cambio se verifica
+> en cada petición — un KDF lento ahí sería un ataque de denegación de servicio
+> contra uno mismo.
+
+### Dar de alta el primer comercio
 
 ```bash
-python -c "from app.core.security import generate_api_key; print(generate_api_key())"
+# Desde la máquina donde corre la API, sin necesidad de panel:
+python -m app.cli crear-comercio "Mi Primer Cliente"
 ```
+
+O por API, con la clave de administración:
+
+```bash
+curl -X POST https://tu-api/api/v1/admin/merchants \
+  -H "X-Admin-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "Mi Primer Cliente"}'
+
+curl -X POST https://tu-api/api/v1/admin/merchants/$ID/keys \
+  -H "X-Admin-Key: $ADMIN_KEY" -H "Content-Type: application/json" -d '{}'
+```
+
+Lo que un comercio **no** puede hacer, verificado en `tests/test_aislamiento.py`:
+ver pagos ajenos (404, no 403 — distinguirlos ya filtra qué referencias
+existen), devolver o revisar un pago de otro, heredar su historial de riesgo,
+leer comprobantes ajenos, ni administrar nada.
+
+---
+
+## 💰 Consumo y facturación
+
+Cada hecho facturable se guarda como una fila inmutable, no como un contador:
+un contador no se puede auditar ni recalcular, y si un cliente discute su
+factura no hay con qué responderle.
+
+| Unidad | Cuándo se cuenta |
+|---|---|
+| `payment_created` | Al crear un cobro, también si el riesgo lo rechaza |
+| `receipt_uploaded` | Al almacenar un comprobante |
+| `vision_extraction` | Al llamar al modelo — lo más caro de la plataforma |
+
+El hecho se guarda **en la misma transacción** que lo provocó: no se factura algo
+que no ocurrió, ni se deja de facturar algo que sí.
+
+```bash
+curl https://tu-api/api/v1/usage?desde=2026-10-01 -H "X-API-Key: $CLAVE"
+```
+
+No se anota cada petición HTTP: sería una escritura en base de datos por
+petición para medir algo que no cuesta dinero. El volumen bruto ya lo acota el
+limitador de tasa.
+
+---
+
+## 🔔 Webhooks salientes
+
+Para que tus clientes no tengan que preguntar en bucle si su comprobante ya se
+concilió. El comercio registra una URL y recibe `payment.updated` y
+`receipt.reconciled` firmados con **el mismo esquema que Stripe**
+(`t=<ts>,v1=<hmac>`), porque cualquier integrador ya sabe verificarlo.
+
+```bash
+curl -X POST https://tu-api/api/v1/webhook-endpoints \
+  -H "X-API-Key: $CLAVE" -H "Content-Type: application/json" \
+  -d '{"url": "https://tu-tienda/hooks/finai"}'
+```
+
+La marca de tiempo entra dentro de lo firmado, así que un envío capturado no se
+puede reproducir indefinidamente. Un destino caído **no tumba la operación**: el
+cobro ya ocurrió y no puede deshacerse porque el servidor del cliente no
+responda; el intento queda registrado.
 
 ---
 
@@ -140,6 +220,14 @@ verifica — sin el script, 50 de 50 peticiones se cuelan; con él, exactamente 
 | `POST` | `/api/v1/receipts` | Sube un comprobante y encola su análisis (202). |
 | `GET` | `/api/v1/receipts/{id}` | Estado del análisis y datos extraídos. |
 | `POST` | `/api/v1/webhooks/stripe` | Recepción idempotente de eventos de Stripe. |
+| `GET` | `/api/v1/usage` | Consumo propio del comercio, por periodo. |
+| `POST` | `/api/v1/webhook-endpoints` | Registrar una URL a la que avisar. |
+| `GET` | `/api/v1/webhook-endpoints` | Listar los destinos propios. |
+| `DELETE` | `/api/v1/webhook-endpoints/{id}` | Eliminar un destino. |
+| `POST` | `/api/v1/admin/merchants` | **Admin:** dar de alta un comercio. |
+| `POST` | `/api/v1/admin/merchants/{id}/keys` | **Admin:** emitir una clave. |
+| `DELETE` | `/api/v1/admin/merchants/{id}/keys/{kid}` | **Admin:** revocar una clave. |
+| `GET` | `/api/v1/admin/merchants/{id}/usage` | **Admin:** consumo de un comercio. |
 
 ### Ejemplo: crear un pago
 
@@ -269,10 +357,15 @@ make test-pg                                     # las mismas contra PostgreSQL
 make lint
 ```
 
-La batería cubre el motor de reglas, la conversión de importes, la conciliación,
-el ciclo de vida del pago (idempotencia, revisión, devolución), el webhook
-(firma, caducidad, idempotencia), la limitación de tasa y el contrato con la API
-de visión.
+La batería cubre el aislamiento entre comercios, el motor de reglas, la
+conversión de importes, la conciliación, el ciclo de vida del pago
+(idempotencia, revisión, devolución), los webhooks de entrada y de salida, la
+limitación de tasa, la medición de consumo y el contrato con las APIs de visión.
+
+El almacenamiento S3 se prueba contra un servidor S3 real en proceso, no contra
+un doble de Python: así se ejercitan la firma de las peticiones, el endpoint
+personalizado —que es como se apunta a R2, B2 o MinIO— y los errores del
+protocolo.
 
 Los contratos con los proveedores de visión se verifican contra dobles locales
 de sus endpoints —uno por proveedor—, así que comprueban la forma exacta de la

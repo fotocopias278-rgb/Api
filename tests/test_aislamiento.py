@@ -188,3 +188,42 @@ async def test_un_comercio_desactivado_no_puede_operar(client, session):
 async def test_claves_invalidas(client, clave):
     respuesta = await client.get("/api/v1/payments", headers={"X-API-Key": clave})
     assert respuesta.status_code == 401
+
+
+async def test_un_comprobante_no_concilia_contra_un_pago_de_otro(
+    client, session, merchant, settings
+):
+    """Defensa en profundidad del punto más delicado de la conciliación.
+
+    Se fuerza a mano la asociación cruzada —algo que la API no permite— para
+    comprobar que, aun así, no se concilia contra el pago ajeno.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.db.models import Payment, Receipt
+    from app.schemas.enums import ReconciliationStatus
+    from app.services.receipts import ReceiptService
+    from tests.test_receipts_api import FakeVisionProvider, extraccion
+
+    ajeno = (await crear(client, AUTH_HEADERS_OTRO)).json()["reference"]
+    pago_ajeno = await session.scalar(select(Payment).where(Payment.reference == ajeno))
+
+    subida = await client.post(
+        "/api/v1/receipts",
+        files={"file": ("r.png", PNG_1PX, "image/png")},
+        headers=AUTH_HEADERS,
+    )
+    receipt_id = _uuid.UUID(subida.json()["id"])
+
+    comprobante = await session.get(Receipt, receipt_id)
+    comprobante.payment_id = pago_ajeno.id  # asociación imposible por la API
+    await session.commit()
+
+    resultado = await ReceiptService(
+        session, merchant=merchant, provider=FakeVisionProvider(extraccion()), config=settings
+    ).analyze(receipt_id)
+
+    assert resultado.reconciliation_status is ReconciliationStatus.PENDING
+    assert "ya no existe" in resultado.reconciliation_notes[0]
