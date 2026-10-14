@@ -83,7 +83,7 @@ async def api_falsa():
 
 
 def proveedor(base_url: str) -> AnthropicVisionProvider:
-    config = Settings(**{**get_settings().model_dump(exclude={"api_keys", "fraud_blocked_bins"}),
+    config = Settings(**{**get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"}),
                          "anthropic_api_key": "sk-ant-de-prueba"})
     cliente = anthropic.AsyncAnthropic(api_key="sk-ant-de-prueba", base_url=base_url)
     return AnthropicVisionProvider(config, client=cliente)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.deps import AuthDep, PaymentServiceDep
+from app.api.deps import PaymentServiceDep
 from app.schemas.fraud import FraudEvaluationRequest, FraudEvaluationResponse
 from app.schemas.payment import PaymentCreate
 from app.services.fraud import fraud_engine
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/fraud", tags=["fraude"])
     summary="Puntuar una operación sin cobrarla",
 )
 async def evaluate(
-    payload: FraudEvaluationRequest, service: PaymentServiceDep, _: AuthDep
+    payload: FraudEvaluationRequest, service: PaymentServiceDep
 ) -> FraudEvaluationResponse:
     """Devuelve la puntuación de riesgo que tendría la operación.
 

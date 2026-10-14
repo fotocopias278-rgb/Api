@@ -1,8 +1,7 @@
 """Limitación de tasa vista desde HTTP."""
 
 from tests.conftest import AUTH_HEADERS
-
-OTRA_CLAVE = {"X-API-Key": "test-key-secundaria"}
+from tests.conftest import AUTH_HEADERS_OTRO as OTRA_CLAVE
 
 
 async def test_las_respuestas_informan_del_cupo(client_limitado):

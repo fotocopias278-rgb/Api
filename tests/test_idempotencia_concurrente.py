@@ -13,11 +13,11 @@ from app.services.payments import PaymentService
 DATOS = PaymentCreate(customer_id="cli_carrera", amount_minor=2_500, currency="EUR")
 
 
-async def test_dos_peticiones_simultaneas_devuelven_el_mismo_pago(session_factory):
+async def test_dos_peticiones_simultaneas_devuelven_el_mismo_pago(session_factory, merchant):
     async def crear():
         # Sesiones independientes: sin ellas no hay concurrencia real.
         async with session_factory() as session:
-            return await PaymentService(session).create_payment(
+            return await PaymentService(session, merchant=merchant).create_payment(
                 DATOS, idempotency_key="clave-en-carrera"
             )
 
@@ -31,15 +31,15 @@ async def test_dos_peticiones_simultaneas_devuelven_el_mismo_pago(session_factor
     assert resultados[0].reference == resultados[1].reference
 
 
-async def test_no_se_crean_dos_pagos_con_la_misma_clave(session_factory):
+async def test_no_se_crean_dos_pagos_con_la_misma_clave(session_factory, merchant):
     async def crear():
         async with session_factory() as session:
-            return await PaymentService(session).create_payment(
+            return await PaymentService(session, merchant=merchant).create_payment(
                 DATOS, idempotency_key="clave-unica-carrera"
             )
 
     await asyncio.gather(crear(), crear(), return_exceptions=True)
 
     async with session_factory() as session:
-        _, total = await PaymentService(session).list_payments(customer_id="cli_carrera")
+        _, total = await PaymentService(session, merchant=merchant).list_payments(customer_id="cli_carrera")
     assert total == 1, f"se crearon {total} pagos para una sola clave"

@@ -6,21 +6,13 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 from app.db.models import Payment
 from app.schemas.enums import PaymentStatus, ReconciliationStatus
 from app.services.receipts import ReceiptService
 from tests.conftest import AUTH_HEADERS
+from tests.conftest import ajustes_con as ajustes
 from tests.test_receipts_api import PNG_1PX, FakeVisionProvider, extraccion
-
-
-def ajustes(**overrides) -> Settings:
-    base = get_settings().model_dump()
-    base.update(overrides)
-    # `api_keys` y demás son campos calculados: no se pasan al constructor.
-    for calculado in ("api_keys", "fraud_blocked_bins"):
-        base.pop(calculado, None)
-    return Settings(**base)
 
 
 async def crear_pago(client, method="bank_transfer", **overrides) -> str:
@@ -48,21 +40,24 @@ async def pago(session, referencia) -> Payment:
     return await session.scalar(select(Payment).where(Payment.reference == referencia))
 
 
-async def analizar(session, receipt_id, extraction, config=None):
+async def analizar(session, merchant, receipt_id, extraction, config=None):
     service = ReceiptService(
-        session, provider=FakeVisionProvider(extraction), config=config or get_settings()
+        session,
+        merchant=merchant,
+        provider=FakeVisionProvider(extraction),
+        config=config or get_settings(),
     )
     return await service.analyze(receipt_id)
 
 
 # --- Modo "proponer" (por defecto) ------------------------------------------
 
-async def test_un_comprobante_que_cuadra_deja_el_pago_en_revision(client, session):
+async def test_un_comprobante_que_cuadra_deja_el_pago_en_revision(client, session, merchant):
     """Por defecto no se liquida solo: se propone a una persona."""
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
 
-    receipt = await analizar(session, receipt_id, extraccion())
+    receipt = await analizar(session, merchant, receipt_id, extraccion())
     assert receipt.reconciliation_status is ReconciliationStatus.MATCHED
 
     actualizado = await pago(session, referencia)
@@ -73,12 +68,11 @@ async def test_un_comprobante_que_cuadra_deja_el_pago_en_revision(client, sessio
 
 # --- Modo "liquidación automática" ------------------------------------------
 
-async def test_con_liquidacion_automatica_la_transferencia_se_cobra(client, session):
+async def test_con_liquidacion_automatica_la_transferencia_se_cobra(client, session, merchant):
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
 
-    await analizar(
-        session, receipt_id, extraccion(), config=ajustes(reconciliation_auto_settle=True)
+    await analizar(session, merchant, receipt_id, extraccion(), config=ajustes(reconciliation_auto_settle=True)
     )
 
     actualizado = await pago(session, referencia)
@@ -87,13 +81,12 @@ async def test_con_liquidacion_automatica_la_transferencia_se_cobra(client, sess
     assert actualizado.settled_at is not None
 
 
-async def test_una_tarjeta_no_se_liquida_con_un_comprobante(client, session):
+async def test_una_tarjeta_no_se_liquida_con_un_comprobante(client, session, merchant):
     """En tarjeta manda la pasarela, no el papel que suba el cliente."""
     referencia = await crear_pago(client, method="card")
     receipt_id = await subir(client, referencia)
 
-    await analizar(
-        session, receipt_id, extraccion(), config=ajustes(reconciliation_auto_settle=True)
+    await analizar(session, merchant, receipt_id, extraccion(), config=ajustes(reconciliation_auto_settle=True)
     )
 
     actualizado = await pago(session, referencia)
@@ -103,12 +96,11 @@ async def test_una_tarjeta_no_se_liquida_con_un_comprobante(client, session):
 
 # --- Señales de fraude derivadas del comprobante ----------------------------
 
-async def test_indicios_de_manipulacion_generan_senal_de_fraude(client, session):
+async def test_indicios_de_manipulacion_generan_senal_de_fraude(client, session, merchant):
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
 
-    await analizar(
-        session, receipt_id, extraccion(tampering_indicators=["tipografía inconsistente"])
+    await analizar(session, merchant, receipt_id, extraccion(tampering_indicators=["tipografía inconsistente"])
     )
 
     actualizado = await pago(session, referencia)
@@ -119,13 +111,12 @@ async def test_indicios_de_manipulacion_generan_senal_de_fraude(client, session)
     assert "RECEIPT_TAMPERING" in codigos
 
 
-async def test_un_justificante_reutilizado_marca_el_pago(client, session):
+async def test_un_justificante_reutilizado_marca_el_pago(client, session, merchant):
     primera = await crear_pago(client, customer_id="cli_a")
     segunda = await crear_pago(client, customer_id="cli_b")
 
-    await analizar(session, await subir(client, primera), extraccion())
-    receipt = await analizar(
-        session, await subir(client, segunda, PNG_1PX + b"\x00"), extraccion()
+    await analizar(session, merchant, await subir(client, primera), extraccion())
+    receipt = await analizar(session, merchant, await subir(client, segunda, PNG_1PX + b"\x00"), extraccion()
     )
     assert receipt.reconciliation_status is ReconciliationStatus.DUPLICATE
 
@@ -135,14 +126,14 @@ async def test_un_justificante_reutilizado_marca_el_pago(client, session):
     assert "RECEIPT_DUPLICATE" in codigos
 
 
-async def test_el_comprobante_nunca_rechaza_el_pago_por_si_solo(client, session):
+async def test_el_comprobante_nunca_rechaza_el_pago_por_si_solo(client, session, merchant):
     """Aun con la puntuación al máximo, la última palabra es de una persona."""
     primera = await crear_pago(client, customer_id="cli_a")
     segunda = await crear_pago(client, customer_id="cli_b")
 
     sospechoso = extraccion(tampering_indicators=["bordes retocados"])
-    await analizar(session, await subir(client, primera), sospechoso)
-    await analizar(session, await subir(client, segunda, PNG_1PX + b"\x00"), sospechoso)
+    await analizar(session, merchant, await subir(client, primera), sospechoso)
+    await analizar(session, merchant, await subir(client, segunda, PNG_1PX + b"\x00"), sospechoso)
 
     actualizado = await pago(session, segunda)
     await session.refresh(actualizado)
@@ -154,12 +145,12 @@ async def test_el_comprobante_nunca_rechaza_el_pago_por_si_solo(client, session)
 
 # --- Guardas de estado -------------------------------------------------------
 
-async def test_un_comprobante_ilegible_no_toca_el_pago(client, session):
+async def test_un_comprobante_ilegible_no_toca_el_pago(client, session, merchant):
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
     antes = (await pago(session, referencia)).status
 
-    await analizar(session, receipt_id, extraccion(is_legible=False))
+    await analizar(session, merchant, receipt_id, extraccion(is_legible=False))
 
     actualizado = await pago(session, referencia)
     await session.refresh(actualizado)
@@ -167,7 +158,7 @@ async def test_un_comprobante_ilegible_no_toca_el_pago(client, session):
 
 
 @pytest.mark.parametrize("estado_final", [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED])
-async def test_un_comprobante_tardio_no_deshace_un_pago_cerrado(client, session, estado_final):
+async def test_un_comprobante_tardio_no_deshace_un_pago_cerrado(client, session, estado_final, merchant):
     """Llegar tarde con un justificante no puede revertir lo ya decidido."""
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
@@ -177,7 +168,7 @@ async def test_un_comprobante_tardio_no_deshace_un_pago_cerrado(client, session,
     cerrado.settled_at = datetime.now(UTC)
     await session.commit()
 
-    await analizar(session, receipt_id, extraccion(tampering_indicators=["retocado"]))
+    await analizar(session, merchant, receipt_id, extraccion(tampering_indicators=["retocado"]))
 
     actualizado = await pago(session, referencia)
     await session.refresh(actualizado)
@@ -186,11 +177,11 @@ async def test_un_comprobante_tardio_no_deshace_un_pago_cerrado(client, session,
 
 # --- Resolución manual -------------------------------------------------------
 
-async def test_aprobar_una_transferencia_no_llama_a_la_pasarela(client, session):
+async def test_aprobar_una_transferencia_no_llama_a_la_pasarela(client, session, merchant):
     """El dinero ya llegó: crear un cobro sería cobrar dos veces."""
     referencia = await crear_pago(client)
     receipt_id = await subir(client, referencia)
-    await analizar(session, receipt_id, extraccion())
+    await analizar(session, merchant, receipt_id, extraccion())
 
     response = await client.post(
         f"/api/v1/payments/{referencia}/review", json={"approve": True}, headers=AUTH_HEADERS

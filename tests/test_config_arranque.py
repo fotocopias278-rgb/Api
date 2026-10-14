@@ -4,13 +4,14 @@ from app.core.config import Settings, get_settings
 
 
 def ajustes(**overrides) -> Settings:
-    base = get_settings().model_dump(exclude={"api_keys", "fraud_blocked_bins"})
+    base = get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"})
     return Settings(**{**base, **overrides})
 
 
-def test_sin_claves_de_api_es_un_error():
-    errores, _ = ajustes(api_keys_raw="").validate_runtime()
-    assert any("API_KEYS" in e for e in errores)
+def test_sin_claves_de_administracion_es_un_error():
+    """Sin ellas no se podría dar de alta ningún comercio."""
+    errores, _ = ajustes(admin_api_keys_raw="").validate_runtime()
+    assert any("ADMIN_API_KEYS" in e for e in errores)
 
 
 def test_stripe_sin_secreto_de_webhook_es_un_error():

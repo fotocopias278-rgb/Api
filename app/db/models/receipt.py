@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "receipts"
 
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("merchants.id", ondelete="CASCADE"), index=True
+    )
     payment_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("payments.id", ondelete="CASCADE"), default=None, index=True
     )

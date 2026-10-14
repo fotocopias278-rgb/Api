@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Path, Query, status
 
-from app.api.deps import AuthDep, IdempotencyKey, PaginationDep, PaymentServiceDep
+from app.api.deps import IdempotencyKey, PaginationDep, PaymentServiceDep
 from app.core.exceptions import NotFoundError
 from app.schemas.common import Page
 from app.schemas.enums import PaymentStatus
@@ -26,7 +26,6 @@ ReferencePath = Annotated[str, Path(description="Referencia pública del pago.",
 async def create_payment(
     payload: PaymentCreate,
     service: PaymentServiceDep,
-    _: AuthDep,
     idempotency_key: IdempotencyKey = None,
 ) -> PaymentRead:
     """Crea el pago, lo puntúa y lo envía a la pasarela si el riesgo lo permite.
@@ -43,7 +42,6 @@ async def create_payment(
 async def list_payments(
     service: PaymentServiceDep,
     pagination: PaginationDep,
-    _: AuthDep,
     customer_id: Annotated[str | None, Query(max_length=64)] = None,
     payment_status: Annotated[PaymentStatus | None, Query(alias="status")] = None,
 ) -> Page[PaymentRead]:
@@ -63,7 +61,7 @@ async def list_payments(
 
 @router.get("/{reference}", response_model=PaymentDetail, summary="Consultar un pago")
 async def get_payment(
-    reference: ReferencePath, service: PaymentServiceDep, _: AuthDep
+    reference: ReferencePath, service: PaymentServiceDep
 ) -> PaymentDetail:
     """Devuelve el pago junto con su historial de evaluaciones de riesgo."""
     payment = await service.get_by_reference(reference)
@@ -76,7 +74,6 @@ async def get_payment(
 async def refund_payment(
     reference: ReferencePath,
     service: PaymentServiceDep,
-    _: AuthDep,
     payload: RefundRequest | None = None,
 ) -> PaymentRead:
     body = payload or RefundRequest()
@@ -94,7 +91,6 @@ async def refund_payment(
 async def review_payment(
     reference: ReferencePath,
     service: PaymentServiceDep,
-    _: AuthDep,
     approve: Annotated[
         bool, Body(embed=True, description="True para cobrar, False para rechazar.")
     ],

@@ -12,7 +12,7 @@ DIRECTO = ("postgresql+asyncpg://u:c@ep-blue-mode-ae56za91.c-2.us-east-2."
 
 
 def ajustes(url: str) -> Settings:
-    base = get_settings().model_dump(exclude={"api_keys", "fraud_blocked_bins"})
+    base = get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"})
     return Settings(**{**base, "database_url": url})
 
 

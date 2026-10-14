@@ -46,7 +46,7 @@ async def test_el_analisis_en_proceso_nunca_propaga(monkeypatch):
     await tasks.analyze_receipt_inline(uuid.uuid4())
 
 
-async def test_el_modo_inline_produce_el_mismo_resultado(client, session, settings):
+async def test_el_modo_inline_produce_el_mismo_resultado(client, session, settings, merchant):
     """Cambiar de modo no debe cambiar lo que acaba guardado."""
     pago = await client.post(
         "/api/v1/payments",
@@ -64,8 +64,7 @@ async def test_el_modo_inline_produce_el_mismo_resultado(client, session, settin
     )
     receipt_id = uuid.UUID(subida.json()["id"])
 
-    receipt = await ReceiptService(
-        session, provider=FakeVisionProvider(extraccion()), config=settings
+    receipt = await ReceiptService(session, merchant=merchant, provider=FakeVisionProvider(extraccion()), config=settings
     ).analyze(receipt_id)
 
     assert receipt.status is ReceiptStatus.EXTRACTED

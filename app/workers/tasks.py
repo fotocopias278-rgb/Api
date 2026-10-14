@@ -10,6 +10,7 @@ from typing import Any
 from celery.exceptions import MaxRetriesExceededError
 
 from app.core.exceptions import NotFoundError
+from app.db.models import Merchant, Receipt
 from app.db.session import SessionFactory
 from app.services.receipts import ReceiptService
 from app.workers.celery_app import celery_app
@@ -47,7 +48,15 @@ def analyze_receipt_task(self: Any, receipt_id: str) -> dict[str, Any]:
 
 async def _analyze(receipt_id: uuid.UUID):
     async with SessionFactory() as session:
-        return await ReceiptService(session).analyze(receipt_id)
+        # El worker no tiene petición de la que sacar la clave: el inquilino se
+        # deriva del propio comprobante, que ya lo lleva grabado.
+        receipt = await session.get(Receipt, receipt_id)
+        if receipt is None:
+            raise NotFoundError(f"No existe el comprobante {receipt_id}.")
+        merchant = await session.get(Merchant, receipt.merchant_id)
+        if merchant is None:  # pragma: no cover - protegido por clave foránea
+            raise NotFoundError(f"No existe el comercio {receipt.merchant_id}.")
+        return await ReceiptService(session, merchant=merchant).analyze(receipt_id)
 
 
 async def analyze_receipt_inline(receipt_id: uuid.UUID) -> None:

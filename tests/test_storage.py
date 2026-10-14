@@ -8,7 +8,7 @@ from app.services.storage import LocalFileStorage
 
 
 def ajustes(directorio: str) -> Settings:
-    base = get_settings().model_dump(exclude={"api_keys", "fraud_blocked_bins"})
+    base = get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"})
     return Settings(**{**base, "receipt_storage_dir": directorio})
 
 

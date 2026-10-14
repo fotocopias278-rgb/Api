@@ -24,6 +24,17 @@ from app.services.vision import GeminiVisionProvider
 from tests.test_vision_contrato import EXTRACCION_VALIDA
 
 
+def tipo_de(inline: dict) -> str | None:
+    """Lee el tipo del bloque sin casarse con la ortografía del SDK.
+
+    google-genai serializa la clave externa en camelCase y la interna en
+    snake_case, y eso ha cambiado entre versiones menores (2.22 enviaba
+    `mimeType`; 2.30, `mime_type`). Lo que el contrato debe fijar es que el
+    tipo viaja, no cómo lo deletrea el SDK esta semana.
+    """
+    return inline.get("mime_type") or inline.get("mimeType")
+
+
 def _puerto_libre() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -68,7 +79,7 @@ async def gemini_falso():
 
 
 def proveedor(base_url: str) -> GeminiVisionProvider:
-    base = get_settings().model_dump(exclude={"api_keys", "fraud_blocked_bins"})
+    base = get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"})
     config = Settings(**{**base, "google_api_key": "clave-de-prueba"})
     cliente = genai.Client(
         api_key="clave-de-prueba",
@@ -82,9 +93,9 @@ async def test_la_imagen_viaja_como_inline_data(gemini_falso):
     await proveedor(base_url).extract(b"\x89PNG\r\n\x1a\n datos", "image/png")
 
     partes = capturado["body"]["contents"][0]["parts"]
-    inline = next(p for p in partes if "inlineData" in p)
-    assert inline["inlineData"]["mimeType"] == "image/png"
-    assert base64.b64decode(inline["inlineData"]["data"]) == b"\x89PNG\r\n\x1a\n datos"
+    inline = next(p for p in partes if "inlineData" in p)["inlineData"]
+    assert tipo_de(inline) == "image/png"
+    assert base64.b64decode(inline["data"]) == b"\x89PNG\r\n\x1a\n datos"
 
 
 async def test_un_pdf_tambien_se_admite(gemini_falso):
@@ -92,8 +103,8 @@ async def test_un_pdf_tambien_se_admite(gemini_falso):
     await proveedor(base_url).extract(b"%PDF-1.7", "application/pdf")
 
     partes = capturado["body"]["contents"][0]["parts"]
-    inline = next(p for p in partes if "inlineData" in p)
-    assert inline["inlineData"]["mimeType"] == "application/pdf"
+    inline = next(p for p in partes if "inlineData" in p)["inlineData"]
+    assert tipo_de(inline) == "application/pdf"
 
 
 async def test_se_pide_json_con_el_esquema_de_extraccion(gemini_falso):

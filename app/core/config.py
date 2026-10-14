@@ -30,9 +30,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # --- Seguridad ---
-    # Lista de claves de API separadas por comas. Sin claves configuradas la API
-    # solo arranca en entornos no productivos (ver `validate_runtime`).
-    api_keys_raw: str = Field(default="", alias="API_KEYS")
+    # Claves de ADMINISTRACIÓN, separadas por comas: dan de alta comercios y
+    # emiten sus claves. Las credenciales de los comercios viven en la base de
+    # datos, no aquí: añadir un cliente no puede exigir un redespliegue.
+    admin_api_keys_raw: str = Field(default="", alias="ADMIN_API_KEYS")
 
     # --- Persistencia ---
     database_url: str = "postgresql+asyncpg://finai:finai@localhost:5432/finai"
@@ -93,9 +94,9 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def api_keys(self) -> tuple[str, ...]:
-        """Claves de API válidas, normalizadas."""
-        return tuple(k.strip() for k in self.api_keys_raw.split(",") if k.strip())
+    def admin_api_keys(self) -> tuple[str, ...]:
+        """Claves de administración válidas, normalizadas."""
+        return tuple(k.strip() for k in self.admin_api_keys_raw.split(",") if k.strip())
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -125,8 +126,10 @@ class Settings(BaseSettings):
         errores: list[str] = []
         avisos: list[str] = []
 
-        if not self.api_keys:
-            errores.append("API_KEYS no está configurado: la API rechazaría todas las peticiones.")
+        if not self.admin_api_keys:
+            errores.append(
+                "ADMIN_API_KEYS no está configurado: no se podrían dar de alta comercios."
+            )
         if self.fraud_review_threshold >= self.fraud_reject_threshold:
             errores.append("FRAUD_REVIEW_THRESHOLD debe ser menor que FRAUD_REJECT_THRESHOLD.")
         if self.stripe_api_key and not self.stripe_webhook_secret:

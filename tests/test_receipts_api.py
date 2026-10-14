@@ -119,12 +119,11 @@ async def test_consultar_comprobante_inexistente(client):
 
 # --- Análisis ----------------------------------------------------------------
 
-async def test_analisis_extrae_y_concilia(client, session, settings):
+async def test_analisis_extrae_y_concilia(client, session, settings, merchant):
     referencia = await crear_pago(client)
     receipt_id = uuid.UUID((await subir(client, referencia=referencia)).json()["id"])
 
-    service = ReceiptService(
-        session, provider=FakeVisionProvider(extraccion()), config=settings
+    service = ReceiptService(session, merchant=merchant, provider=FakeVisionProvider(extraccion()), config=settings
     )
     receipt = await service.analyze(receipt_id)
 
@@ -134,12 +133,11 @@ async def test_analisis_extrae_y_concilia(client, session, settings):
     assert receipt.reconciliation_status is ReconciliationStatus.MATCHED
 
 
-async def test_importe_que_no_cuadra_marca_discrepancia(client, session, settings):
+async def test_importe_que_no_cuadra_marca_discrepancia(client, session, settings, merchant):
     referencia = await crear_pago(client)
     receipt_id = uuid.UUID((await subir(client, referencia=referencia)).json()["id"])
 
-    service = ReceiptService(
-        session, provider=FakeVisionProvider(extraccion(amount="999.00")), config=settings
+    service = ReceiptService(session, merchant=merchant, provider=FakeVisionProvider(extraccion(amount="999.00")), config=settings
     )
     receipt = await service.analyze(receipt_id)
 
@@ -147,21 +145,20 @@ async def test_importe_que_no_cuadra_marca_discrepancia(client, session, setting
     assert receipt.reconciliation_notes
 
 
-async def test_comprobante_sin_pago_queda_pendiente_de_conciliar(client, session, settings):
+async def test_comprobante_sin_pago_queda_pendiente_de_conciliar(client, session, settings, merchant):
     receipt_id = uuid.UUID((await subir(client)).json()["id"])
 
-    service = ReceiptService(session, provider=FakeVisionProvider(extraccion()), config=settings)
+    service = ReceiptService(session, merchant=merchant, provider=FakeVisionProvider(extraccion()), config=settings)
     receipt = await service.analyze(receipt_id)
 
     assert receipt.status is ReceiptStatus.EXTRACTED
     assert receipt.reconciliation_status is ReconciliationStatus.PENDING
 
 
-async def test_fallo_del_modelo_deja_el_comprobante_como_fallido(client, session, settings):
+async def test_fallo_del_modelo_deja_el_comprobante_como_fallido(client, session, settings, merchant):
     receipt_id = uuid.UUID((await subir(client)).json()["id"])
 
-    service = ReceiptService(
-        session,
+    service = ReceiptService(session, merchant=merchant,
         provider=FakeVisionProvider(error=VisionExtractionError("el modelo no respondió")),
         config=settings,
     )
@@ -173,13 +170,13 @@ async def test_fallo_del_modelo_deja_el_comprobante_como_fallido(client, session
     assert receipt.reconciliation_status is ReconciliationStatus.PENDING
 
 
-async def test_justificante_reutilizado_en_otro_pago_es_duplicado(client, session, settings):
+async def test_justificante_reutilizado_en_otro_pago_es_duplicado(client, session, settings, merchant):
     """El mismo número de operación no puede justificar dos pagos distintos."""
     primera_ref = await crear_pago(client, customer_id="cliente-a")
     segunda_ref = await crear_pago(client, customer_id="cliente-b")
 
     provider = FakeVisionProvider(extraccion())
-    service = ReceiptService(session, provider=provider, config=settings)
+    service = ReceiptService(session, merchant=merchant, provider=provider, config=settings)
 
     primer_id = uuid.UUID((await subir(client, referencia=primera_ref)).json()["id"])
     primero = await service.analyze(primer_id)
@@ -194,7 +191,7 @@ async def test_justificante_reutilizado_en_otro_pago_es_duplicado(client, sessio
     assert segundo.reconciliation_status is ReconciliationStatus.DUPLICATE
 
 
-async def test_el_contenido_se_guarda_y_se_recupera(client, session, settings):
+async def test_el_contenido_se_guarda_y_se_recupera(client, session, settings, merchant):
     """El worker debe poder releer el fichero que subió la API."""
     receipt_id = uuid.UUID((await subir(client)).json()["id"])
     receipt = await session.scalar(select(Receipt).where(Receipt.id == receipt_id))
@@ -203,16 +200,16 @@ async def test_el_contenido_se_guarda_y_se_recupera(client, session, settings):
     assert receipt.size_bytes == len(PNG_1PX)
 
     provider = FakeVisionProvider(extraccion())
-    await ReceiptService(session, provider=provider, config=settings).analyze(receipt_id)
+    await ReceiptService(session, merchant=merchant, provider=provider, config=settings).analyze(receipt_id)
     assert provider.calls == 1
 
 
-async def test_el_proveedor_por_defecto_no_da_nada_por_bueno(client, session, settings):
+async def test_el_proveedor_por_defecto_no_da_nada_por_bueno(client, session, settings, merchant):
     """Sin credenciales de IA, la conciliación queda para revisión manual."""
     referencia = await crear_pago(client)
     receipt_id = uuid.UUID((await subir(client, referencia=referencia)).json()["id"])
 
-    receipt = await ReceiptService(session, config=settings).analyze(receipt_id)
+    receipt = await ReceiptService(session, merchant=merchant, config=settings).analyze(receipt_id)
 
     assert receipt.reconciliation_status is ReconciliationStatus.UNREADABLE
     payment = await session.scalar(select(Payment).where(Payment.reference == referencia))

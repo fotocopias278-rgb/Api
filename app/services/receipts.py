@@ -13,7 +13,7 @@ from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import NotFoundError, ValidationError, VisionExtractionError
 from app.core.security import sha256_hexdigest
-from app.db.models import FraudAssessment, Payment, Receipt
+from app.db.models import FraudAssessment, Merchant, Payment, Receipt
 from app.schemas.enums import (
     PaymentMethod,
     PaymentStatus,
@@ -43,12 +43,14 @@ class ReceiptService:
         self,
         session: AsyncSession,
         *,
+        merchant: Merchant,
         provider: VisionProvider | None = None,
         storage: ReceiptStorage | None = None,
         engine: FraudEngine | None = None,
         config: Settings | None = None,
     ) -> None:
         self._session = session
+        self._merchant = merchant
         self._settings = config or default_settings
         self._provider = provider or get_vision_provider(self._settings)
         self._storage = storage or get_receipt_storage(self._settings)
@@ -81,19 +83,28 @@ class ReceiptService:
             )
 
         digest = sha256_hexdigest(content)
+        # Acotado al comercio: avisar de que "este fichero ya se subió" cuando
+        # lo subió otro cliente revelaría que existe, y además son negocios
+        # distintos — un mismo justificante puede llegar legítimamente a dos.
         previous = await self._session.scalar(
-            select(Receipt).where(Receipt.content_sha256 == digest).limit(1)
+            select(Receipt)
+            .where(Receipt.merchant_id == self._merchant.id, Receipt.content_sha256 == digest)
+            .limit(1)
         )
 
         payment: Payment | None = None
         if payment_reference:
             payment = await self._session.scalar(
-                select(Payment).where(Payment.reference == payment_reference)
+                select(Payment).where(
+                    Payment.merchant_id == self._merchant.id,
+                    Payment.reference == payment_reference,
+                )
             )
             if payment is None:
                 raise NotFoundError(f"No existe el pago {payment_reference}.")
 
         receipt = Receipt(
+            merchant_id=self._merchant.id,
             payment_id=payment.id if payment else None,
             filename=filename[:255],
             content_type=content_type,
@@ -113,9 +124,7 @@ class ReceiptService:
 
     async def analyze(self, receipt_id: uuid.UUID) -> Receipt:
         """Extrae los datos del comprobante y lo concilia con su pago."""
-        receipt = await self._session.get(Receipt, receipt_id)
-        if receipt is None:
-            raise NotFoundError(f"No existe el comprobante {receipt_id}.")
+        receipt = await self._get_own(receipt_id)
 
         if receipt.storage_uri is None:  # pragma: no cover - inconsistencia de datos
             raise NotFoundError(f"El comprobante {receipt_id} no tiene fichero asociado.")
@@ -248,6 +257,7 @@ class ReceiptService:
 
         rows = await self._session.execute(
             select(Receipt).where(
+                Receipt.merchant_id == self._merchant.id,
                 Receipt.id != receipt.id,
                 Receipt.status == ReceiptStatus.EXTRACTED,
                 Receipt.payment_id.is_not(None),
@@ -262,8 +272,16 @@ class ReceiptService:
                 return True
         return False
 
-    async def get(self, receipt_id: uuid.UUID) -> Receipt:
-        receipt = await self._session.get(Receipt, receipt_id)
+    async def _get_own(self, receipt_id: uuid.UUID) -> Receipt:
+        """Carga un comprobante propio, o 404 si es de otro comercio."""
+        receipt = await self._session.scalar(
+            select(Receipt).where(
+                Receipt.merchant_id == self._merchant.id, Receipt.id == receipt_id
+            )
+        )
         if receipt is None:
             raise NotFoundError(f"No existe el comprobante {receipt_id}.")
         return receipt
+
+    async def get(self, receipt_id: uuid.UUID) -> Receipt:
+        return await self._get_own(receipt_id)

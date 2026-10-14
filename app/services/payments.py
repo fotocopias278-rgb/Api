@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import ConflictError, GatewayError, NotFoundError
-from app.db.models import FraudAssessment, Payment
+from app.db.models import FraudAssessment, Merchant, Payment
 from app.db.models.payment import new_reference
 from app.schemas.enums import PaymentMethod, PaymentStatus, RiskDecision
 from app.schemas.payment import PaymentCreate
@@ -30,11 +30,16 @@ class PaymentService:
         self,
         session: AsyncSession,
         *,
+        merchant: Merchant,
         engine: FraudEngine | None = None,
         gateway: StripeGateway | None = None,
         config: Settings | None = None,
     ) -> None:
         self._session = session
+        # El comercio es obligatorio y no tiene valor por defecto: así una
+        # consulta sin inquilino falla al construir el servicio, no en
+        # producción con los datos de otro cliente ya servidos.
+        self._merchant = merchant
         self._engine = engine or fraud_engine
         self._gateway = gateway or stripe_gateway
         self._settings = config or default_settings
@@ -58,7 +63,10 @@ class PaymentService:
                 ),
                 func.count(func.distinct(Payment.card_bin)).filter(Payment.created_at >= last_day),
                 func.avg(Payment.amount_minor).filter(Payment.status == PaymentStatus.SUCCEEDED),
-            ).where(Payment.customer_id == data.customer_id)
+            ).where(
+                Payment.merchant_id == self._merchant.id,
+                Payment.customer_id == data.customer_id,
+            )
         )
         total, last_hour_count, failed_count, distinct_cards, avg_amount = totals.one()
 
@@ -102,6 +110,7 @@ class PaymentService:
         assessment = self._engine.evaluate(await self.build_fraud_context(data))
 
         payment = Payment(
+            merchant_id=self._merchant.id,
             reference=new_reference(),
             customer_id=data.customer_id,
             amount_minor=data.amount_minor,
@@ -248,14 +257,22 @@ class PaymentService:
         return await self.get_by_idempotency_key(key)
 
     async def get_by_reference(self, reference: str) -> Payment | None:
+        """Un pago de otro comercio no existe: se devuelve None, no un 403.
+
+        Decir "existe pero no es tuyo" filtra qué referencias están en uso.
+        """
         result = await self._session.execute(
-            select(Payment).where(Payment.reference == reference)
+            select(Payment).where(
+                Payment.merchant_id == self._merchant.id, Payment.reference == reference
+            )
         )
         return result.scalar_one_or_none()
 
     async def get_by_idempotency_key(self, key: str) -> Payment | None:
         result = await self._session.execute(
-            select(Payment).where(Payment.idempotency_key == key)
+            select(Payment).where(
+                Payment.merchant_id == self._merchant.id, Payment.idempotency_key == key
+            )
         )
         return result.scalar_one_or_none()
 
@@ -267,7 +284,7 @@ class PaymentService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Payment], int]:
-        filters = []
+        filters = [Payment.merchant_id == self._merchant.id]
         if customer_id:
             filters.append(Payment.customer_id == customer_id)
         if status:

@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Path, UploadFile, status
 
-from app.api.deps import AuthDep, ReceiptServiceDep, SettingsDep
+from app.api.deps import ReceiptServiceDep, SettingsDep
 from app.core.exceptions import ValidationError
 from app.db.models import Payment, Receipt
 from app.schemas.receipt import ReceiptAccepted, ReceiptRead
@@ -33,7 +33,6 @@ async def upload_receipt(
     service: ReceiptServiceDep,
     settings: SettingsDep,
     background: BackgroundTasks,
-    _: AuthDep,
     file: Annotated[UploadFile, File(description="Imagen o PDF del comprobante.")],
     payment_reference: Annotated[str | None, Form(max_length=64)] = None,
 ) -> ReceiptAccepted:
@@ -73,7 +72,6 @@ async def upload_receipt(
 async def get_receipt(
     receipt_id: Annotated[uuid.UUID, Path(description="Identificador del comprobante.")],
     service: ReceiptServiceDep,
-    _: AuthDep,
 ) -> ReceiptRead:
     """Devuelve el estado del análisis y, si terminó, los datos extraídos."""
     receipt = await service.get(receipt_id)

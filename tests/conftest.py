@@ -12,6 +12,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import uuid
 from collections.abc import AsyncIterator, Iterator
 
 _TMP_DIR = tempfile.mkdtemp(prefix="finai-tests-")
@@ -30,7 +31,7 @@ os.environ.update(
     {
         "ENVIRONMENT": "test",
         "DATABASE_URL": TEST_DATABASE_URL,
-        "API_KEYS": "test-key-primaria,test-key-secundaria",
+        "ADMIN_API_KEYS": "clave-admin-de-test",
         "RECEIPT_STORAGE_DIR": os.path.join(_TMP_DIR, "receipts"),
         "STRIPE_WEBHOOK_SECRET": "whsec_test_secret",
         "FRAUD_BLOCKED_BINS": "666666",
@@ -58,13 +59,25 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 
 from app.api.deps import get_session  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
+from app.core.security import hash_api_key, key_prefix  # noqa: E402
 from app.db import models  # noqa: E402,F401 - registra las tablas
 from app.db.base import Base  # noqa: E402
+from app.db.models import ApiKey, Merchant  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.services.rate_limit import RateLimiter  # noqa: E402
 
-API_KEY = "test-key-primaria"
+# Dos comercios con claves fijas: así las cabeceras pueden ser constantes y,
+# sobre todo, cada test puede comprobar que uno no ve los datos del otro.
+API_KEY = "clave-comercio-uno"
+API_KEY_OTRO = "clave-comercio-dos"
 AUTH_HEADERS = {"X-API-Key": API_KEY}
+AUTH_HEADERS_OTRO = {"X-API-Key": API_KEY_OTRO}
+
+ADMIN_KEY = "clave-admin-de-test"
+ADMIN_HEADERS = {"X-Admin-Key": ADMIN_KEY}
+
+MERCHANT_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+MERCHANT_ID_OTRO = uuid.UUID("22222222-2222-2222-2222-222222222222")
 
 
 @pytest.fixture
@@ -74,6 +87,25 @@ async def engine():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+
+    # Los dos comercios de prueba, sembrados con el esquema.
+    sembrar = async_sessionmaker(bind=engine, expire_on_commit=False)
+    async with sembrar() as session:
+        for merchant_id, nombre, clave in (
+            (MERCHANT_ID, "Comercio Uno", API_KEY),
+            (MERCHANT_ID_OTRO, "Comercio Dos", API_KEY_OTRO),
+        ):
+            session.add(Merchant(id=merchant_id, name=nombre))
+            session.add(
+                ApiKey(
+                    merchant_id=merchant_id,
+                    name="test",
+                    prefix=key_prefix(clave),
+                    key_hash=hash_api_key(clave),
+                )
+            )
+        await session.commit()
+
     yield engine
     await engine.dispose()
 
@@ -238,3 +270,28 @@ async def client_limitado(session_factory, redis_client, monkeypatch, settings):
         yield http_client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def merchant(session) -> Merchant:
+    """El comercio principal de las pruebas."""
+    return await session.get(Merchant, MERCHANT_ID)
+
+
+@pytest.fixture
+async def merchant_otro(session) -> Merchant:
+    """Un segundo comercio, para comprobar el aislamiento."""
+    return await session.get(Merchant, MERCHANT_ID_OTRO)
+
+
+def ajustes_con(**overrides):
+    """Construye unos Settings partiendo de los actuales.
+
+    Los campos calculados no son parámetros del constructor, así que hay que
+    excluirlos; tenerlo en un solo sitio evita que cada test repita la lista y
+    se rompa al añadir uno nuevo.
+    """
+    from app.core.config import Settings, get_settings
+
+    base = get_settings().model_dump(exclude={"admin_api_keys", "fraud_blocked_bins"})
+    return Settings(**{**base, **overrides})
