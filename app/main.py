@@ -35,8 +35,12 @@ RATE_LIMIT_EXEMPT = ("/api/v1/health", "/docs", "/redoc", "/openapi.json")
 # que una consulta, así que vacían el cubo antes.
 ROUTE_COSTS: tuple[tuple[str, str, int], ...] = (
     ("POST", "/api/v1/receipts", 10),
+    # Un alias cuesta lo mismo que la ruta que replica: si no, bastaría con
+    # llamar por el otro nombre para saltarse el cupo.
+    ("POST", "/api/v1/receipts/validate", 10),
     ("POST", "/api/v1/payments", 5),
     ("POST", "/api/v1/fraud/evaluate", 2),
+    ("POST", "/api/v1/fraud/score", 2),
 )
 
 

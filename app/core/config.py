@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # Si Redis cae: True deja pasar el tráfico, False lo rechaza con 429.
     rate_limit_fail_open: bool = True
 
+    # --- Mercado Pago ---
+    mercadopago_access_token: str | None = None
+    mercadopago_webhook_secret: str | None = None
+    mercadopago_timeout_seconds: float = 20.0
+    # Margen admitido entre la marca de tiempo firmada y el reloj local.
+    webhook_signature_tolerance_seconds: int = 300
+
     # --- Webhooks salientes ---
     webhook_timeout_seconds: float = 10.0
 

@@ -39,3 +39,21 @@ class ReconciliationStatus(StrEnum):
     MISMATCHED = "mismatched"
     DUPLICATE = "duplicate"
     UNREADABLE = "unreadable"
+
+
+class JobStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DiscrepancyKind(StrEnum):
+    """Tipos de desajuste que el informe de conciliación sabe nombrar."""
+
+    AMOUNT_MISMATCH = "amount_mismatch"
+    DUPLICATE_RECEIPT = "duplicate_receipt"
+    MISSING_RECEIPT = "missing_receipt"
+    ORPHAN_RECEIPT = "orphan_receipt"
+    UNREADABLE_RECEIPT = "unreadable_receipt"
+    GATEWAY_WITHOUT_PAYMENT = "gateway_without_payment"

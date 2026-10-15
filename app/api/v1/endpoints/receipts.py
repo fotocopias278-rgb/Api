@@ -29,6 +29,16 @@ def _to_read(receipt: Receipt, payment: Payment | None = None) -> ReceiptRead:
     status_code=status.HTTP_202_ACCEPTED,
     summary="Subir un comprobante para su análisis",
 )
+@router.post(
+    "/validate",
+    response_model=ReceiptAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Alias de POST /receipts",
+    description=(
+        "Idéntico a `POST /receipts`. Existe para el contrato maestro; ambas "
+        "rutas comparten manejador, así que no pueden divergir."
+    ),
+)
 async def upload_receipt(
     service: ReceiptServiceDep,
     settings: SettingsDep,

@@ -17,6 +17,15 @@ router = APIRouter(prefix="/fraud", tags=["fraude"])
     response_model=FraudEvaluationResponse,
     summary="Puntuar una operación sin cobrarla",
 )
+@router.post(
+    "/score",
+    response_model=FraudEvaluationResponse,
+    summary="Alias de POST /fraud/evaluate",
+    description=(
+        "Idéntico a `POST /fraud/evaluate`. Existe para el contrato maestro; "
+        "ambas rutas comparten manejador, así que no pueden divergir."
+    ),
+)
 async def evaluate(
     payload: FraudEvaluationRequest, service: PaymentServiceDep
 ) -> FraudEvaluationResponse:

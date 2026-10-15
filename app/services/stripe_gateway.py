@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
 from typing import Any
 
 import stripe
@@ -17,21 +16,9 @@ import stripe
 from app.core.config import Settings
 from app.core.config import settings as default_settings
 from app.core.exceptions import GatewayError, WebhookVerificationError
+from app.services.gateway import GatewayCharge
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class GatewayCharge:
-    """Resultado normalizado de un cobro, independiente del proveedor."""
-
-    provider_payment_id: str
-    status: str
-    raw: dict[str, Any]
-
-    @property
-    def succeeded(self) -> bool:
-        return self.status == "succeeded"
 
 
 class StripeGateway:
