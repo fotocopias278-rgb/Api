@@ -52,6 +52,7 @@ class PaymentRead(BaseModel):
     reference: str
     customer_id: str
     amount_minor: int
+    refunded_amount_minor: int
     currency: str
     status: PaymentStatus
     method: PaymentMethod

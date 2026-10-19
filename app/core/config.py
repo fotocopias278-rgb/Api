@@ -81,6 +81,7 @@ class Settings(BaseSettings):
 
     # --- Webhooks salientes ---
     webhook_timeout_seconds: float = 10.0
+    webhook_delivery_mode: Literal["celery", "inline"] = "inline"
 
     # --- Motor de fraude ---
     fraud_review_threshold: int = 40
@@ -184,6 +185,11 @@ class Settings(BaseSettings):
             avisos.append(
                 "RECEIPT_PROCESSING_MODE=inline: la extracción comparte proceso con el "
                 "tráfico web."
+            )
+        if self.is_production and self.webhook_delivery_mode == "inline":
+            avisos.append(
+                "WEBHOOK_DELIVERY_MODE=inline: las entregas son síncronas y no tienen "
+                "reintentos durables; configura celery con worker y Beat."
             )
 
         return errores, avisos

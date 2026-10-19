@@ -168,7 +168,12 @@ curl -X POST https://tu-api/api/v1/webhook-endpoints \
 La marca de tiempo entra dentro de lo firmado, así que un envío capturado no se
 puede reproducir indefinidamente. Un destino caído **no tumba la operación**: el
 cobro ya ocurrió y no puede deshacerse porque el servidor del cliente no
-responda; el intento queda registrado.
+responda; el evento queda persistido primero. Con `WEBHOOK_DELIVERY_MODE=celery`
+se entrega en segundo plano con reintentos y requiere un worker Celery y Celery
+Beat activos. El receptor puede deduplicar por `X-FinAI-Delivery`. Los destinos
+deben ser HTTPS públicos; el control de URL de la aplicación debe
+complementarse con una política de egress que bloquee redes privadas. El modo
+`inline` conserva la entrega síncrona, pero no ofrece reintentos durables.
 
 ---
 
@@ -248,7 +253,12 @@ y `risk_decision`. La petición se procesó correctamente; lo que se rechazó fu
 la operación.
 
 Reintentar con la misma `Idempotency-Key` devuelve el pago original sin volver a
-cobrar; reutilizarla con otro importe da `409`.
+cobrar; se compara la petición completa, y reutilizarla con otros datos da `409`.
+Las devoluciones también requieren una `Idempotency-Key`; sus operaciones se
+persisten antes de llamar a la pasarela, para que un timeout pueda reintentarse
+sin duplicar el reembolso. Las devoluciones parciales informan
+`refunded_amount_minor` y dejan el estado `partially_refunded` hasta completar
+el importe original.
 
 ### Ejemplo: conciliar un comprobante
 

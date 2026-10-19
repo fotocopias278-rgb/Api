@@ -95,7 +95,7 @@ IdempotencyKey = Annotated[
     str | None,
     Header(
         alias="Idempotency-Key",
-        description="Reintentar con la misma clave devuelve el pago original.",
+        description="Reintentar con la misma clave devuelve el resultado original.",
         max_length=128,
     ),
 ]

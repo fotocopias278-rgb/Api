@@ -6,6 +6,7 @@ from app.db.models.merchant import ApiKey, Merchant
 from app.db.models.payment import Payment
 from app.db.models.receipt import Receipt
 from app.db.models.reconciliation_job import ReconciliationJob
+from app.db.models.refund import RefundOperation
 from app.db.models.usage import UsageEvent, UsageKind
 from app.db.models.webhook import WebhookEvent
 
@@ -17,6 +18,7 @@ __all__ = [
     "Payment",
     "Receipt",
     "ReconciliationJob",
+    "RefundOperation",
     "UsageEvent",
     "UsageKind",
     "WebhookDelivery",

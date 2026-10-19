@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, Path, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import SessionDep, SettingsDep
 from app.core.exceptions import NotFoundError
@@ -95,9 +96,20 @@ async def stripe_webhook(
     )
     session.add(record)
 
-    applied = await _apply_event(session, event_type, event)
-    record.processed_at = datetime.now(UTC)
-    await session.commit()
+    try:
+        applied = await _apply_event(session, event_type, event)
+        record.processed_at = datetime.now(UTC)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        duplicate = await session.scalar(
+            select(WebhookEvent).where(
+                WebhookEvent.provider == "stripe", WebhookEvent.event_id == event_id
+            )
+        )
+        if duplicate is None:
+            raise
+        return {"received": True, "duplicate": True}
 
     logger.info(
         "webhook.processed",
@@ -127,11 +139,42 @@ async def _apply_event(session: SessionDep, event_type: str, event: dict[str, An
     # Lo que la hace segura es la firma HMAC verificada antes de llegar aquí,
     # más que `provider_payment_id` es único en toda la tabla.
     payment = await session.scalar(
-        select(Payment).where(Payment.provider_payment_id == provider_id)
+        select(Payment)
+        .where(Payment.provider_payment_id == provider_id)
+        .with_for_update()
     )
     if payment is None:
         logger.warning("webhook.payment_not_found", extra={"provider_payment_id": provider_id})
         return False
+
+    if payment.refunded_amount_minor and new_status not in {
+        PaymentStatus.REFUNDED,
+        PaymentStatus.PARTIALLY_REFUNDED,
+    }:
+        logger.info(
+            "webhook.stale_payment_transition_ignored",
+            extra={"provider_payment_id": provider_id, "current_status": str(payment.status)},
+        )
+        return False
+    if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED} and new_status in {
+        PaymentStatus.PROCESSING,
+        PaymentStatus.FAILED,
+    }:
+        logger.info(
+            "webhook.stale_payment_transition_ignored",
+            extra={"provider_payment_id": provider_id, "current_status": str(payment.status)},
+        )
+        return False
+
+    if event_type == "charge.refunded":
+        refunded = int(obj.get("amount_refunded", payment.amount_minor) or 0)
+        payment.refunded_amount_minor = max(payment.refunded_amount_minor, refunded)
+        payment.status = (
+            PaymentStatus.REFUNDED
+            if payment.refunded_amount_minor >= payment.amount_minor
+            else PaymentStatus.PARTIALLY_REFUNDED
+        )
+        return True
 
     payment.status = new_status
     if new_status is PaymentStatus.SUCCEEDED:
@@ -188,13 +231,24 @@ async def webhook_unificado(
     )
     session.add(registro)
 
-    if provider == "mercadopago":
-        aplicado = await _aplicar_mercadopago(session, event)
-    else:
-        aplicado = await _apply_event(session, event_type, event)
+    try:
+        if provider == "mercadopago":
+            aplicado = await _aplicar_mercadopago(session, event)
+        else:
+            aplicado = await _apply_event(session, event_type, event)
 
-    registro.processed_at = datetime.now(UTC)
-    await session.commit()
+        registro.processed_at = datetime.now(UTC)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        duplicado = await session.scalar(
+            select(WebhookEvent).where(
+                WebhookEvent.provider == provider, WebhookEvent.event_id == event_id
+            )
+        )
+        if duplicado is None:
+            raise
+        return {"received": True, "duplicate": True}
 
     logger.info(
         "webhook.processed",
@@ -215,13 +269,25 @@ async def _aplicar_mercadopago(session: SessionDep, event: dict[str, Any]) -> bo
         return False
 
     payment = await session.scalar(
-        select(Payment).where(Payment.provider_payment_id == provider_id)
+        select(Payment)
+        .where(Payment.provider_payment_id == provider_id)
+        .with_for_update()
     )
     if payment is None:
         logger.warning("webhook.payment_not_found", extra={"provider_payment_id": provider_id})
         return False
 
+    if payment.refunded_amount_minor and nuevo is not PaymentStatus.REFUNDED:
+        return False
+    if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED} and nuevo in {
+        PaymentStatus.PROCESSING,
+        PaymentStatus.FAILED,
+    }:
+        return False
+
     payment.status = nuevo
+    if nuevo is PaymentStatus.REFUNDED:
+        payment.refunded_amount_minor = payment.amount_minor
     if nuevo is PaymentStatus.SUCCEEDED:
         payment.settled_at = datetime.now(UTC)
     if nuevo is PaymentStatus.FAILED:

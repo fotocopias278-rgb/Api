@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, Enum, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -31,6 +32,7 @@ class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Huella del fichero: detecta el mismo comprobante subido dos veces.
     content_sha256: Mapped[str] = mapped_column(String(64), index=True)
     storage_uri: Mapped[str | None] = mapped_column(String(512), default=None)
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     status: Mapped[ReceiptStatus] = mapped_column(
         Enum(ReceiptStatus, native_enum=False, length=32),
@@ -59,4 +61,5 @@ class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         # La búsqueda de duplicados siempre es "este comercio, este número".
         Index("ix_receipts_merchant_operation", "merchant_id", "operation_number"),
+        Index("ix_receipts_requeue", "status", "last_enqueued_at", "created_at"),
     )

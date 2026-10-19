@@ -54,10 +54,14 @@ class WebhookDelivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status_code: Mapped[int | None] = mapped_column(Integer, default=None)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_error: Mapped[str | None] = mapped_column(String(512), default=None)
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     endpoint: Mapped[WebhookEndpoint] = relationship(back_populates="deliveries")
 
-    __table_args__ = (Index("ix_deliveries_merchant_created", "merchant_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_deliveries_merchant_created", "merchant_id", "created_at"),
+        Index("ix_deliveries_requeue", "delivered_at", "last_enqueued_at"),
+    )
 
 
 class EventType:

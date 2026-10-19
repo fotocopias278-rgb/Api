@@ -127,6 +127,30 @@ Debe responder `database: ok` y `redis: ok`.
 - **La extracción compite con el tráfico web** por la CPU del mismo proceso.
   Con volumen real, pasa a plan de pago y separa el worker de Celery.
 
+### Configuración necesaria para un servicio resistente
+
+El `render.yaml` incluido usa el plan gratuito, `RECEIPT_PROCESSING_MODE=inline`
+y `WEBHOOK_DELIVERY_MODE=inline`: es una configuración de demostración, no una
+cola durable. Para operar de forma resistente, configura la API con ambos modos
+en `celery` y ejecuta dos procesos persistentes además del servicio web:
+
+```bash
+celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
+```
+
+El worker procesa comprobantes y webhooks salientes; Beat vuelve a encolar
+trabajos pendientes o bloqueados después de una caída. Ambos necesitan la misma
+`DATABASE_URL`, `REDIS_URL`, credenciales de visión y configuración de S3 que la
+API. El disco local no es válido con más de una réplica.
+
+Además, fija un límite de tamaño de request en el proxy/plataforma, no solo en
+FastAPI: las cargas multipart se reciben antes de ejecutar el endpoint. Restringe
+el egress del worker a Internet público: la API rechaza URLs privadas y
+redirecciones en webhooks, pero la red debe bloquear también rangos internos
+para cubrir DNS rebinding. Configura backup automático de Postgres y prueba la
+restauración en un entorno aislado antes de procesar dinero real.
+
 ---
 
 ## Llamar a la API desde PHP (InfinityFree)

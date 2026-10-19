@@ -3,8 +3,12 @@
 import pytest
 from sqlalchemy import select
 
+from app.core.exceptions import ConflictError, GatewayError
 from app.db.models import Payment
+from app.db.models.refund import RefundOperation
 from app.schemas.enums import PaymentStatus, RiskDecision
+from app.services.gateway import GatewayCharge
+from app.services.payments import PaymentService
 from tests.conftest import AUTH_HEADERS
 
 
@@ -80,6 +84,17 @@ async def test_reusar_la_clave_con_otro_importe_es_conflicto(client):
 
     assert conflicto.status_code == 409
     assert conflicto.json()["code"] == "conflict"
+
+
+async def test_reusar_la_clave_con_otro_cliente_es_conflicto(client):
+    headers = {**AUTH_HEADERS, "Idempotency-Key": "clave-unica-cliente"}
+    await client.post("/api/v1/payments", json=cuerpo(), headers=headers)
+    conflicto = await client.post(
+        "/api/v1/payments",
+        json=cuerpo(customer_id="otro-cliente"),
+        headers=headers,
+    )
+    assert conflicto.status_code == 409
 
 
 @pytest.mark.parametrize(
@@ -195,10 +210,11 @@ async def test_devolucion_solo_sobre_pagos_cobrados(client, session):
     devuelto = await client.post(
         f"/api/v1/payments/{reference}/refund",
         json={"reason": "requested_by_customer"},
-        headers=AUTH_HEADERS,
+        headers={**AUTH_HEADERS, "Idempotency-Key": "refund-total-1"},
     )
     assert devuelto.status_code == 200
     assert devuelto.json()["status"] == PaymentStatus.REFUNDED
+    assert devuelto.json()["refunded_amount_minor"] == 2_500
 
 
 async def test_no_se_devuelve_mas_de_lo_cobrado(client, session):
@@ -210,9 +226,84 @@ async def test_no_se_devuelve_mas_de_lo_cobrado(client, session):
     response = await client.post(
         f"/api/v1/payments/{reference}/refund",
         json={"amount_minor": 999_999},
-        headers=AUTH_HEADERS,
+        headers={**AUTH_HEADERS, "Idempotency-Key": "refund-too-much"},
     )
     assert response.status_code == 409
+
+
+async def test_devoluciones_parciales_acumulan_y_son_idempotentes(client, session):
+    reference = (await crear(client)).json()["reference"]
+    payment = await session.scalar(select(Payment).where(Payment.reference == reference))
+    payment.status = PaymentStatus.SUCCEEDED
+    await session.commit()
+
+    headers = {**AUTH_HEADERS, "Idempotency-Key": "refund-parcial-1"}
+    payload = {"amount_minor": 1_000, "reason": "requested_by_customer"}
+    first = await client.post(
+        f"/api/v1/payments/{reference}/refund", json=payload, headers=headers
+    )
+    replay = await client.post(
+        f"/api/v1/payments/{reference}/refund", json=payload, headers=headers
+    )
+    assert first.status_code == replay.status_code == 200
+    assert replay.json()["refunded_amount_minor"] == 1_000
+    assert replay.json()["status"] == PaymentStatus.PARTIALLY_REFUNDED
+
+    rest = await client.post(
+        f"/api/v1/payments/{reference}/refund",
+        json={"amount_minor": 1_500},
+        headers={**AUTH_HEADERS, "Idempotency-Key": "refund-parcial-2"},
+    )
+    assert rest.status_code == 200
+    assert rest.json()["refunded_amount_minor"] == 2_500
+    assert rest.json()["status"] == PaymentStatus.REFUNDED
+
+
+async def test_devolucion_exige_clave_de_idempotencia(client, session):
+    reference = (await crear(client)).json()["reference"]
+    payment = await session.scalar(select(Payment).where(Payment.reference == reference))
+    payment.status = PaymentStatus.SUCCEEDED
+    await session.commit()
+    response = await client.post(
+        f"/api/v1/payments/{reference}/refund",
+        json={"amount_minor": 100},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+async def test_devolucion_fallida_libera_la_reserva_y_no_reutiliza_la_clave(
+    client, session, merchant, settings
+):
+    reference = (await crear(client)).json()["reference"]
+    payment = await session.scalar(select(Payment).where(Payment.reference == reference))
+    payment.status = PaymentStatus.SUCCEEDED
+    await session.commit()
+
+    class GatewayConFallo:
+        calls = 0
+
+        async def refund(self, **kwargs):
+            self.calls += 1
+            return GatewayCharge(
+                provider_payment_id=kwargs["provider_payment_id"],
+                status="failed",
+                raw={"id": "refund_failed"},
+            )
+
+    gateway = GatewayConFallo()
+    service = PaymentService(session, merchant=merchant, gateway=gateway, config=settings)
+
+    with pytest.raises(GatewayError):
+        await service.refund(reference, amount_minor=100, idempotency_key="refund-failed")
+
+    operation = await session.scalar(
+        select(RefundOperation).where(RefundOperation.idempotency_key == "refund-failed")
+    )
+    assert operation.status == "failed"
+    with pytest.raises(ConflictError):
+        await service.refund(reference, amount_minor=100, idempotency_key="refund-failed")
+    assert gateway.calls == 1
 
 
 async def test_evaluar_riesgo_sin_crear_pago(client):

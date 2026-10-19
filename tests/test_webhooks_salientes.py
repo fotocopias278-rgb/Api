@@ -203,7 +203,16 @@ async def test_no_se_borra_el_destino_de_otro(client):
     assert borrado.status_code == 404
 
 
-@pytest.mark.parametrize("url", ["no-es-una-url", "ftp://servidor/x"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "no-es-una-url",
+        "ftp://servidor/x",
+        "http://comercio.example/hook",
+        "https://127.0.0.1/hook",
+        "https://localhost/hook",
+    ],
+)
 async def test_urls_invalidas(client, url):
     respuesta = await client.post(
         "/api/v1/webhook-endpoints", json={"url": url}, headers=AUTH_HEADERS
@@ -222,5 +231,7 @@ async def test_crear_un_pago_dispara_el_aviso(client, session):
     entregas = await session.execute(
         select(WebhookDelivery).where(WebhookDelivery.merchant_id == MERCHANT_ID)
     )
-    tipos = {e.event_type for e in entregas.scalars()}
+    filas = list(entregas.scalars())
+    tipos = {e.event_type for e in filas}
     assert EventType.PAYMENT_UPDATED in tipos
+    assert all(e.attempts == 0 and e.delivered_at is None for e in filas)

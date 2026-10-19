@@ -113,6 +113,7 @@ class MercadoPagoGateway:
         provider_payment_id: str,
         amount_minor: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> GatewayCharge:
         if not self.enabled:
             return self._simulate(provider_payment_id, "refunded")
@@ -122,7 +123,9 @@ class MercadoPagoGateway:
             respuesta = await cliente.post(
                 f"/v1/payments/{provider_payment_id}/refunds",
                 json={} if amount_minor is None else {"amount": amount_minor / 100},
-                headers={"X-Idempotency-Key": f"refund-{provider_payment_id}"},
+                headers={
+                    "X-Idempotency-Key": idempotency_key or f"refund-{provider_payment_id}"
+                },
             )
             respuesta.raise_for_status()
         except httpx.HTTPStatusError as exc:

@@ -241,7 +241,16 @@ def _register_exception_handlers(app: FastAPI) -> None:
             "validation_error",
             "La petición no supera la validación.",
             request,
-            {"errors": exc.errors()},
+            {
+                "errors": [
+                    {
+                        "type": error.get("type"),
+                        "loc": error.get("loc"),
+                        "msg": error.get("msg"),
+                    }
+                    for error in exc.errors()
+                ]
+            },
         )
 
     @app.exception_handler(Exception)

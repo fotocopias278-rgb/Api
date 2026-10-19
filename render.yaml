@@ -1,9 +1,9 @@
 # Despliegue en Render como un ÚNICO servicio web.
 #
 # La extracción de comprobantes corre dentro del propio proceso web
-# (RECEIPT_PROCESSING_MODE=inline) porque los planes gratuitos no ofrecen
-# workers en segundo plano. Al pasar a plan de pago, añade un servicio
-# `worker` con el comando de Celery y cambia el modo a `celery`.
+# (RECEIPT_PROCESSING_MODE=inline) y los webhooks se entregan síncronamente
+# porque los planes gratuitos no ofrecen workers en segundo plano. Al pasar a
+# plan de pago, añade worker y Beat de Celery y cambia ambos modos a `celery`.
 services:
   - type: web
     name: finai-gateway
@@ -18,6 +18,8 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: RECEIPT_PROCESSING_MODE
+        value: inline
+      - key: WEBHOOK_DELIVERY_MODE
         value: inline
 
       # Render genera la clave de administración en el primer despliegue.

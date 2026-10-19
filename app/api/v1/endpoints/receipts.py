@@ -51,7 +51,12 @@ async def upload_receipt(
     Responde 202: la lectura del documento ocurre en segundo plano; el resultado
     se consulta en `GET /receipts/{id}`.
     """
-    content = await file.read()
+    content = await file.read(settings.receipt_max_bytes + 1)
+    if len(content) > settings.receipt_max_bytes:
+        raise ValidationError(
+            "El fichero supera el tamaño máximo permitido.",
+            details={"max_bytes": settings.receipt_max_bytes},
+        )
     if not file.content_type:
         raise ValidationError("No se pudo determinar el tipo del fichero.")
 

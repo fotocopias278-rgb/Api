@@ -75,10 +75,14 @@ async def refund_payment(
     reference: ReferencePath,
     service: PaymentServiceDep,
     payload: RefundRequest | None = None,
+    idempotency_key: IdempotencyKey = None,
 ) -> PaymentRead:
     body = payload or RefundRequest()
     payment = await service.refund(
-        reference, amount_minor=body.amount_minor, reason=body.reason
+        reference,
+        amount_minor=body.amount_minor,
+        reason=body.reason,
+        idempotency_key=idempotency_key,
     )
     return PaymentRead.model_validate(payment)
 

@@ -59,7 +59,10 @@ async def test_no_se_puede_devolver_un_pago_ajeno(client, session):
     ajeno = await client.post(f"/api/v1/payments/{referencia}/refund", headers=AUTH_HEADERS_OTRO)
     assert ajeno.status_code == 404
 
-    propio = await client.post(f"/api/v1/payments/{referencia}/refund", headers=AUTH_HEADERS)
+    propio = await client.post(
+        f"/api/v1/payments/{referencia}/refund",
+        headers={**AUTH_HEADERS, "Idempotency-Key": "refund-aislamiento"},
+    )
     assert propio.status_code == 200
 
 

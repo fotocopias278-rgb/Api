@@ -40,6 +40,7 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     # Importes en unidades mínimas (céntimos) para evitar aritmética flotante.
     amount_minor: Mapped[int] = mapped_column(Integer)
+    refunded_amount_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     currency: Mapped[str] = mapped_column(String(3))
 
     status: Mapped[PaymentStatus] = mapped_column(
@@ -55,6 +56,7 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     provider_payment_id: Mapped[str | None] = mapped_column(String(128), unique=True, default=None)
     # Única por comercio, no global: dos comercios pueden usar "pedido-1".
     idempotency_key: Mapped[str | None] = mapped_column(String(128), default=None)
+    idempotency_payload_hash: Mapped[str | None] = mapped_column(String(64), default=None)
 
     # Señales de riesgo materializadas para poder filtrar sin join.
     risk_score: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -82,6 +84,10 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint("amount_minor > 0", name="amount_positive"),
+        CheckConstraint(
+            "refunded_amount_minor >= 0 AND refunded_amount_minor <= amount_minor",
+            name="refund_amount_in_range",
+        ),
         UniqueConstraint("merchant_id", "idempotency_key", name="uq_payments_merchant_idempotency"),
         Index("ix_payments_merchant_customer_created", "merchant_id", "customer_id", "created_at"),
     )

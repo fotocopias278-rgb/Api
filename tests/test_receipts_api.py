@@ -107,6 +107,15 @@ async def test_fichero_vacio(client):
     assert response.status_code == 422
 
 
+async def test_upload_corta_lectura_al_superar_limite_configurado(client, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "receipt_max_bytes", len(PNG_1PX) - 1)
+    response = await subir(client)
+    assert response.status_code == 422
+    assert response.json()["details"]["max_bytes"] == len(PNG_1PX) - 1
+
+
 async def test_comprobante_para_un_pago_inexistente(client):
     response = await subir(client, referencia="pay_no_existe")
     assert response.status_code == 404
@@ -131,6 +140,19 @@ async def test_analisis_extrae_y_concilia(client, session, settings, merchant):
     assert receipt.confidence == pytest.approx(0.91)
     assert receipt.extraction["bank_name"] == "Banco de Prueba"
     assert receipt.reconciliation_status is ReconciliationStatus.MATCHED
+
+
+async def test_reintento_de_tarea_no_repite_extraccion_completada(
+    client, session, settings, merchant
+):
+    receipt_id = uuid.UUID((await subir(client)).json()["id"])
+    provider = FakeVisionProvider(extraccion())
+    service = ReceiptService(session, merchant=merchant, provider=provider, config=settings)
+
+    await service.analyze(receipt_id)
+    await service.analyze(receipt_id)
+
+    assert provider.calls == 1
 
 
 async def test_importe_que_no_cuadra_marca_discrepancia(client, session, settings, merchant):

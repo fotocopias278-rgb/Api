@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,13 +137,27 @@ class ReceiptService:
 
     async def analyze(self, receipt_id: uuid.UUID) -> Receipt:
         """Extrae los datos del comprobante y lo concilia con su pago."""
-        receipt = await self._get_own(receipt_id)
+        receipt = await self._session.scalar(
+            select(Receipt)
+            .where(Receipt.id == receipt_id, Receipt.merchant_id == self._merchant.id)
+            .with_for_update()
+        )
+        if receipt is None:
+            raise NotFoundError(f"No existe el comprobante {receipt_id}.")
+        if receipt.status is not ReceiptStatus.PENDING:
+            cutoff = datetime.now(UTC) - timedelta(minutes=20)
+            updated_at = receipt.updated_at
+            if (
+                receipt.status is not ReceiptStatus.PROCESSING
+                or (updated_at and updated_at.replace(tzinfo=updated_at.tzinfo or UTC) > cutoff)
+            ):
+                return receipt
+        receipt.status = ReceiptStatus.PROCESSING
+        await self._session.commit()
+        await self._session.refresh(receipt)
 
         if receipt.storage_uri is None:  # pragma: no cover - inconsistencia de datos
             raise NotFoundError(f"El comprobante {receipt_id} no tiene fichero asociado.")
-
-        receipt.status = ReceiptStatus.PROCESSING
-        await self._session.commit()
 
         content = await self._storage.load(receipt.storage_uri)
         try:

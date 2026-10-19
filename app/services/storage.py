@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 import aioboto3
 from botocore.exceptions import ClientError
@@ -56,7 +58,10 @@ class LocalFileStorage:
         return path.as_uri()
 
     async def load(self, uri: str) -> bytes:
-        path = self._ruta_segura(Path(uri.removeprefix("file://")))
+        parsed = urlsplit(uri)
+        if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+            raise ValidationError("La referencia del fichero local no es válida.")
+        path = self._ruta_segura(Path(url2pathname(parsed.path)))
         try:
             return await asyncio.to_thread(path.read_bytes)
         except FileNotFoundError as exc:

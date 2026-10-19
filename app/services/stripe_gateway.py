@@ -78,6 +78,7 @@ class StripeGateway:
         provider_payment_id: str,
         amount_minor: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> GatewayCharge:
         if not self.enabled:
             return self._simulate(provider_payment_id, "refunded")
@@ -93,6 +94,7 @@ class StripeGateway:
                     if reason in {"duplicate", "fraudulent", "requested_by_customer"}
                     else {}
                 ),
+                idempotency_key=idempotency_key,
             )
         except stripe.StripeError as exc:
             logger.exception("stripe.refund_failed", extra={"payment_intent": provider_payment_id})

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -11,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.config import settings as default_settings
-from app.core.exceptions import ConflictError, GatewayError, NotFoundError
-from app.db.models import FraudAssessment, Merchant, Payment
+from app.core.exceptions import ConflictError, GatewayError, NotFoundError, ValidationError
+from app.db.models import FraudAssessment, Merchant, Payment, RefundOperation
 from app.db.models.endpoint import EventType
 from app.db.models.payment import new_reference
 from app.db.models.usage import UsageKind
@@ -100,15 +102,11 @@ class PaymentService:
         La respuesta es siempre un pago: un rechazo por riesgo no es un error de
         la petición, sino un resultado legítimo reflejado en `status`.
         """
+        request_hash = self._request_hash(data)
         if idempotency_key:
             existing = await self.get_by_idempotency_key(idempotency_key)
             if existing is not None:
-                # Reintento del cliente: devolvemos el pago original sin recobrar.
-                if existing.amount_minor != data.amount_minor or existing.currency != data.currency:
-                    raise ConflictError(
-                        "La clave de idempotencia ya se usó con otro importe o divisa.",
-                        details={"idempotency_key": idempotency_key},
-                    )
+                self._validate_idempotent_replay(existing, request_hash)
                 return existing
 
         assessment = self._engine.evaluate(await self.build_fraud_context(data))
@@ -126,6 +124,7 @@ class PaymentService:
             card_country=data.card_country,
             ip_country=data.ip_country,
             idempotency_key=idempotency_key,
+            idempotency_payload_hash=request_hash if idempotency_key else None,
             risk_score=assessment.score,
             risk_decision=assessment.decision,
             status=self._initial_status(assessment.decision),
@@ -151,7 +150,7 @@ class PaymentService:
             await self._session.commit()
         except IntegrityError:
             await self._session.rollback()
-            duplicado = await self._resolve_idempotency_conflict(idempotency_key)
+            duplicado = await self._resolve_idempotency_conflict(idempotency_key, request_hash)
             if duplicado is None:
                 raise
             return duplicado
@@ -218,27 +217,177 @@ class PaymentService:
             payment.status = PaymentStatus.PROCESSING
 
     async def refund(
-        self, reference: str, *, amount_minor: int | None = None, reason: str | None = None
+        self,
+        reference: str,
+        *,
+        amount_minor: int | None = None,
+        reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Payment:
-        payment = await self.get_by_reference(reference)
+        payment = await self._session.scalar(
+            select(Payment)
+            .where(
+                Payment.merchant_id == self._merchant.id,
+                Payment.reference == reference,
+            )
+            .with_for_update()
+        )
         if payment is None:
             raise NotFoundError(f"No existe el pago {reference}.")
-        if payment.status is not PaymentStatus.SUCCEEDED:
+        if not idempotency_key:
+            if payment.status not in {
+                PaymentStatus.SUCCEEDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            }:
+                raise ConflictError(
+                    f"Solo se pueden devolver pagos cobrados; estado actual: {payment.status}.",
+                    details={"reference": reference, "status": payment.status},
+                )
+            raise ValidationError("La devolución requiere la cabecera Idempotency-Key.")
+
+        operation = await self._session.scalar(
+            select(RefundOperation).where(
+                RefundOperation.merchant_id == self._merchant.id,
+                RefundOperation.idempotency_key == idempotency_key,
+            )
+        )
+        if operation is not None:
+            if operation.payment_id != payment.id:
+                raise ConflictError("La clave de idempotencia ya se usó para otro pago.")
+            if operation.requested_amount_minor != amount_minor:
+                raise ConflictError("La clave de idempotencia ya se usó con otro importe.")
+            if reason != operation.reason:
+                raise ConflictError("La clave de idempotencia ya se usó con otro motivo.")
+            if operation.status == "succeeded":
+                return payment
+            if operation.status == "failed":
+                raise ConflictError(
+                    "Esta devolución falló definitivamente; usa otra Idempotency-Key."
+                )
+        else:
+            if payment.status not in {
+                PaymentStatus.SUCCEEDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            }:
+                raise ConflictError(
+                    f"Solo se pueden devolver pagos cobrados; estado actual: {payment.status}.",
+                    details={"reference": reference, "status": payment.status},
+                )
+            reservado = await self._session.scalar(
+                select(func.coalesce(func.sum(RefundOperation.amount_minor), 0)).where(
+                    RefundOperation.payment_id == payment.id,
+                    RefundOperation.status == "pending",
+                )
+            )
+            restante = payment.amount_minor - payment.refunded_amount_minor - int(reservado or 0)
+            importe = amount_minor if amount_minor is not None else restante
+            if importe <= 0 or importe > restante:
+                raise ConflictError("El importe a devolver supera el importe aún disponible.")
+            if payment.provider_payment_id is None:
+                raise ConflictError("El pago no tiene identificador en la pasarela.")
+            operation = RefundOperation(
+                merchant_id=self._merchant.id,
+                payment_id=payment.id,
+                idempotency_key=idempotency_key,
+                requested_amount_minor=amount_minor,
+                amount_minor=importe,
+                reason=reason,
+                status="pending",
+            )
+            self._session.add(operation)
+            try:
+                await self._session.commit()
+            except IntegrityError:
+                await self._session.rollback()
+                payment = await self._session.scalar(
+                    select(Payment)
+                    .where(
+                        Payment.merchant_id == self._merchant.id,
+                        Payment.reference == reference,
+                    )
+                    .with_for_update()
+                )
+                operation = await self._session.scalar(
+                    select(RefundOperation).where(
+                        RefundOperation.merchant_id == self._merchant.id,
+                        RefundOperation.idempotency_key == idempotency_key,
+                    )
+                )
+                if payment is None or operation is None:
+                    raise
+                if (
+                    operation.payment_id != payment.id
+                    or operation.requested_amount_minor != amount_minor
+                    or operation.reason != reason
+                ):
+                    raise ConflictError(
+                        "La clave de idempotencia ya se usó con otra devolución."
+                    ) from None
+                if operation.status == "succeeded":
+                    return payment
+            await self._session.refresh(payment)
+            await self._session.refresh(operation)
+
+        if payment.status not in {
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+            PaymentStatus.REFUNDED,
+        }:
             raise ConflictError(
                 f"Solo se pueden devolver pagos cobrados; estado actual: {payment.status}.",
                 details={"reference": reference, "status": payment.status},
             )
-        if amount_minor is not None and amount_minor > payment.amount_minor:
-            raise ConflictError("El importe a devolver supera el importe cobrado.")
         if payment.provider_payment_id is None:
             raise ConflictError("El pago no tiene identificador en la pasarela.")
 
-        await self._gateway.refund(
-            provider_payment_id=payment.provider_payment_id,
-            amount_minor=amount_minor,
-            reason=reason,
+        try:
+            resultado = await self._gateway.refund(
+                provider_payment_id=payment.provider_payment_id,
+                amount_minor=operation.amount_minor,
+                reason=operation.reason,
+                idempotency_key=hashlib.sha256(
+                    f"{self._merchant.id}:{idempotency_key}".encode()
+                ).hexdigest(),
+            )
+        except GatewayError:
+            # Se conserva `pending`: un timeout puede ocurrir tras aceptar el
+            # reembolso. El reintento usa la misma clave idempotente del proveedor.
+            raise
+
+        if resultado.status in {"failed", "canceled", "cancelled", "rejected"}:
+            operation.status = "failed"
+            operation.provider_refund_id = str(resultado.raw.get("id") or "") or None
+            await self._session.commit()
+            raise GatewayError(
+                "La pasarela rechazó definitivamente la devolución; usa otra "
+                "Idempotency-Key si deseas iniciar un nuevo intento."
+            )
+
+        if resultado.status not in {"succeeded", "approved", "refunded"}:
+            operation.provider_refund_id = str(resultado.raw.get("id") or "") or None
+            await self._session.commit()
+            raise GatewayError(
+                "La devolución sigue pendiente en la pasarela; reintenta con la misma "
+                "Idempotency-Key para consultar el mismo intento."
+            )
+
+        operation.status = "succeeded"
+        operation.provider_refund_id = str(resultado.raw.get("id") or "") or None
+        await self._session.flush()
+        reembolsos_confirmados = await self._session.scalar(
+            select(func.coalesce(func.sum(RefundOperation.amount_minor), 0)).where(
+                RefundOperation.payment_id == payment.id,
+                RefundOperation.status == "succeeded",
+            )
         )
-        payment.status = PaymentStatus.REFUNDED
+        payment.refunded_amount_minor = max(
+            payment.refunded_amount_minor, int(reembolsos_confirmados or 0)
+        )
+        payment.status = (
+            PaymentStatus.REFUNDED
+            if payment.refunded_amount_minor >= payment.amount_minor
+            else PaymentStatus.PARTIALLY_REFUNDED
+        )
         await self._session.commit()
         await self._session.refresh(payment)
         await self._avisar(payment)
@@ -274,7 +423,38 @@ class PaymentService:
 
     # --- Consultas ----------------------------------------------------------
 
-    async def _resolve_idempotency_conflict(self, key: str | None) -> Payment | None:
+    @staticmethod
+    def _request_hash(data: PaymentCreate) -> str:
+        canonical = json.dumps(
+            data.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        ).encode()
+        return hashlib.sha256(canonical).hexdigest()
+
+    def _validate_idempotent_replay(self, payment: Payment, request_hash: str) -> None:
+        if payment.idempotency_payload_hash:
+            existing_hash = payment.idempotency_payload_hash
+        else:
+            legacy_data = PaymentCreate(
+                customer_id=payment.customer_id,
+                amount_minor=payment.amount_minor,
+                currency=payment.currency,
+                method=payment.method,
+                email=payment.email,
+                ip_address=payment.ip_address,
+                card_bin=payment.card_bin,
+                card_country=payment.card_country,
+                ip_country=payment.ip_country,
+                meta=payment.meta,
+            )
+            existing_hash = self._request_hash(legacy_data)
+        if existing_hash != request_hash:
+            raise ConflictError(
+                "La clave de idempotencia ya se usó con otra petición."
+            )
+
+    async def _resolve_idempotency_conflict(
+        self, key: str | None, request_hash: str
+    ) -> Payment | None:
         """Recupera el pago que ganó la carrera por la clave de idempotencia.
 
         Cuando dos peticiones simultáneas usan la misma clave, la perdedora
@@ -285,7 +465,10 @@ class PaymentService:
         """
         if key is None:
             return None
-        return await self.get_by_idempotency_key(key)
+        payment = await self.get_by_idempotency_key(key)
+        if payment is not None:
+            self._validate_idempotent_replay(payment, request_hash)
+        return payment
 
     async def get_by_reference(self, reference: str) -> Payment | None:
         """Un pago de otro comercio no existe: se devuelve None, no un 403.
@@ -339,4 +522,3 @@ class PaymentService:
             RiskDecision.REVIEW: PaymentStatus.UNDER_REVIEW,
             RiskDecision.REJECT: PaymentStatus.REJECTED,
         }[decision]
-

@@ -31,4 +31,14 @@ celery_app.conf.update(
     task_time_limit=600,
     task_soft_time_limit=540,
     result_expires=86_400,
+    beat_schedule={
+        "requeue-stale-receipt-analysis": {
+            "task": "receipts.requeue_stale",
+            "schedule": 60.0,
+        },
+        "requeue-stale-webhook-deliveries": {
+            "task": "webhooks.requeue_stale",
+            "schedule": 60.0,
+        },
+    },
 )

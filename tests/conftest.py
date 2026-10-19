@@ -45,6 +45,7 @@ os.environ.update(
         # peticiones. El cliente por defecto lleva el limitador desactivado.
         "RATE_LIMIT_PER_MINUTE": "60",
         "RATE_LIMIT_BURST": "5",
+        "WEBHOOK_DELIVERY_MODE": "celery",
     }
 )
 
@@ -135,6 +136,7 @@ async def client(session_factory, monkeypatch) -> AsyncIterator[AsyncClient]:
         "app.api.v1.endpoints.receipts.enqueue_receipt_analysis",
         lambda receipt_id: "task-simulada",
     )
+    monkeypatch.setattr("app.services.notifications.enqueue_webhook_delivery", lambda _: None)
 
     app = create_app()
 
@@ -252,6 +254,7 @@ async def client_limitado(session_factory, redis_client, monkeypatch, settings):
         "app.api.v1.endpoints.receipts.enqueue_receipt_analysis",
         lambda receipt_id: "task-simulada",
     )
+    monkeypatch.setattr("app.services.notifications.enqueue_webhook_delivery", lambda _: None)
 
     app = create_app()
 

@@ -108,6 +108,31 @@ async def test_devolucion_por_webhook_de_cargo(client, session):
     assert payment.status is PaymentStatus.REFUNDED
 
 
+async def test_devolucion_parcial_por_webhook_guarda_el_acumulado(client, session):
+    referencia, provider_id = await crear_pago(client)
+    payload = evento(
+        "charge.refunded",
+        provider_id,
+        event_id="evt_partial_refund",
+        amount=2_500,
+        amount_refunded=700,
+    )
+    await enviar(client, payload, firmar(payload))
+    payment = await session.scalar(select(Payment).where(Payment.reference == referencia))
+    assert payment.status is PaymentStatus.PARTIALLY_REFUNDED
+    assert payment.refunded_amount_minor == 700
+
+
+async def test_evento_antiguo_no_revierte_pago_liquidado(client, session):
+    referencia, provider_id = await crear_pago(client)
+    succeeded = evento("payment_intent.succeeded", provider_id, event_id="evt_success")
+    failed = evento("payment_intent.payment_failed", provider_id, event_id="evt_old_failure")
+    await enviar(client, succeeded, firmar(succeeded))
+    await enviar(client, failed, firmar(failed))
+    payment = await session.scalar(select(Payment).where(Payment.reference == referencia))
+    assert payment.status is PaymentStatus.SUCCEEDED
+
+
 async def test_el_evento_repetido_no_se_aplica_dos_veces(client, session):
     """Stripe reintenta hasta recibir 2xx: el segundo envío no debe rehacer nada."""
     _, provider_id = await crear_pago(client)
