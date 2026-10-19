@@ -1,5 +1,11 @@
-COMUNICADO DE ACTUALIZACION
-FinAI Gateway - Cierres finales de pagos, conciliacion y privacidad
+COMUNICADO DE LANZAMIENTO
+FinAI Gateway v0.2.0-beta.1 - Cierres finales de pagos, conciliacion y privacidad
+
+VERSION
+
+Etiqueta sugerida: v0.2.0-beta.1
+Tipo: version preliminar (pre-release)
+Commit de funcionalidades: f553509
 
 RESUMEN
 
@@ -24,18 +30,14 @@ PRINCIPALES NOVEDADES
 
 VALIDACION
 
-Ruff y las pruebas focalizadas pasan. Tambien pasan las pruebas disponibles de
-la suite completa, excluyendo localmente los casos que requieren Lua/Redis y
-Moto/S3, dependencias que no se pudieron preparar en este entorno. La comprobacion
-de Alembic contra una base activa no pudo completarse desde este equipo.
+CI aprobada para el commit de funcionalidades f553509. Ruff y las pruebas
+focalizadas tambien pasan localmente.
 
 ESTADO Y RECOMENDACION
 
-Esta actualizacion debe tratarse como preliminar hasta que la ejecucion de CI
-valide la suite completa y las migraciones en los servicios previstos. Antes de
-procesar pagos reales, confirmar credenciales y webhooks de Sandbox, almacenamiento
-S3 persistente, worker Celery y Celery Beat activos, copias de seguridad y las
-reglas de retencion aplicables al negocio.
+Es una version preliminar. Antes de procesar pagos reales, confirmar credenciales
+y webhooks de Sandbox, almacenamiento S3 persistente, worker Celery y Celery Beat
+activos, copias de seguridad y las reglas de retencion aplicables al negocio.
 
 La tarea de privacidad incluida anonimiza email e IP de pagos; no elimina archivos
 de comprobantes ni establece por si sola una politica legal completa de retencion.

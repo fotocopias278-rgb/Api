@@ -3,7 +3,7 @@
   "info": {
     "title": "FinAI Gateway",
     "description": "\nAPI de validación de pagos, detección de fraude en tiempo real y conciliación\nautomatizada de comprobantes bancarios mediante visión computacional.\n\n**Autenticación:** todas las rutas salvo `/health` y los webhooks requieren la\ncabecera `X-API-Key`. El webhook de Stripe se autentica con su firma HMAC.\n",
-    "version": "0.1.0"
+    "version": "0.2.0-beta.1"
   },
   "paths": {
     "/api/v1/health": {
