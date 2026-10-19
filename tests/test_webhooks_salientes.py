@@ -155,6 +155,22 @@ async def test_un_destino_inactivo_no_recibe(session, settings):
     assert entregas == []
 
 
+@pytest.mark.parametrize("host", ["127.0.0.1", "169.254.169.254"])
+async def test_ssrf_rechaza_ips_privadas_sin_enviar(session, settings, host):
+    destino = await registrar(session, MERCHANT_ID, url=f"http://{host}/hook")
+    config = settings.model_copy(update={"webhook_delivery_mode": "inline"})
+
+    deliveries = await NotificationService(session, config=config).emit(
+        MERCHANT_ID, EventType.PAYMENT_UPDATED, {"email": "person@example.com"}
+    )
+
+    assert len(deliveries) == 1
+    assert deliveries[0].last_error
+    assert "no permitido" in deliveries[0].last_error
+    assert deliveries[0].status_code is None
+    assert deliveries[0].endpoint_id == destino.id
+
+
 async def test_los_eventos_no_se_cruzan_entre_comercios(session, settings):
     """El destino de un comercio jamás recibe lo que le pasa a otro."""
     await registrar(session, MERCHANT_ID, url="https://uno.example/hook")

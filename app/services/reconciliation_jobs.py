@@ -143,32 +143,22 @@ class ReconciliationJobService:
                 )
             )
 
-        merchant_provider_rows = (
-            await self._session.execute(
-                select(Payment.provider, Payment.provider_payment_id).where(
-                    Payment.merchant_id == self._merchant.id
-                )
-            )
-        ).all()
-        merchant_providers = {provider for provider, _ in merchant_provider_rows}
         merchant_provider_payment_ids = {
-            (provider, str(provider_id))
-            for provider, provider_id in merchant_provider_rows
-            if provider_id is not None
+            (payment.provider, str(payment.provider_payment_id))
+            for payment in payments
+            if payment.provider_payment_id is not None
         }
-        events = []
-        if merchant_providers:
-            events = list(
-                (
-                    await self._session.scalars(
-                        select(WebhookEvent).where(
-                            WebhookEvent.created_at >= period_start,
-                            WebhookEvent.created_at < period_end,
-                            WebhookEvent.provider.in_(merchant_providers),
-                        )
+        events = list(
+            (
+                await self._session.scalars(
+                    select(WebhookEvent).where(
+                        WebhookEvent.merchant_id == self._merchant.id,
+                        WebhookEvent.created_at >= period_start,
+                        WebhookEvent.created_at < period_end,
                     )
-                ).all()
-            )
+                )
+            ).all()
+        )
         for event in events:
             event_data = event.payload.get("data", {})
             if not isinstance(event_data, dict):
@@ -176,24 +166,7 @@ class ReconciliationJobService:
             obj = event_data.get("object", event_data)
             if not isinstance(obj, dict):
                 obj = {}
-            metadata = (
-                obj.get("metadata", {})
-                or event_data.get("metadata", {})
-                or event.payload.get("metadata", {})
-                or {}
-            )
-            if not isinstance(metadata, dict):
-                metadata = {}
             provider_id = obj.get("payment_intent") or obj.get("id")
-            belongs_to_merchant = (
-                str(metadata.get("merchant_id", "")) == str(self._merchant.id)
-                or (
-                    provider_id is not None
-                    and (event.provider, str(provider_id)) in merchant_provider_payment_ids
-                )
-            )
-            if not belongs_to_merchant:
-                continue
             if (
                 provider_id is not None
                 and (event.provider, str(provider_id)) in merchant_provider_payment_ids

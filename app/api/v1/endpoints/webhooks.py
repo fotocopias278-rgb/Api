@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import SessionDep, SettingsDep
 from app.core.exceptions import NotFoundError
-from app.db.models import Payment, WebhookEvent
+from app.db.models import Merchant, Payment, WebhookEvent
 from app.schemas.enums import PaymentStatus
 from app.services.gateway import PaymentGatewayProtocol
 from app.services.mercadopago_gateway import MercadoPagoGateway
@@ -92,7 +93,11 @@ async def stripe_webhook(
         return {"received": True, "duplicate": True}
 
     record = WebhookEvent(
-        provider="stripe", event_id=event_id, event_type=event_type, payload=dict(event)
+        merchant_id=await _merchant_id_for_event(session, "stripe", event, event_type),
+        provider="stripe",
+        event_id=event_id,
+        event_type=event_type,
+        payload=dict(event),
     )
     session.add(record)
 
@@ -185,6 +190,47 @@ async def _apply_event(session: SessionDep, event_type: str, event: dict[str, An
     return True
 
 
+async def _merchant_id_for_event(
+    session: SessionDep, provider: str, event: dict[str, Any], event_type: str
+) -> uuid.UUID | None:
+    """Resuelve el inquilino desde metadata firmada o el pago del proveedor."""
+    event_data = event.get("data", {})
+    if not isinstance(event_data, dict):
+        event_data = {}
+    obj = event_data.get("object", event_data)
+    if not isinstance(obj, dict):
+        obj = {}
+    metadata = obj.get("metadata") or event_data.get("metadata") or event.get("metadata") or {}
+    if isinstance(metadata, dict):
+        try:
+            merchant_id = uuid.UUID(str(metadata["merchant_id"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+        else:
+            existing_merchant = await session.scalar(
+                select(Merchant.id).where(Merchant.id == merchant_id)
+            )
+            if existing_merchant is not None:
+                return existing_merchant
+
+    if provider == "stripe":
+        provider_id = (
+            obj.get("id")
+            if event_type.startswith("payment_intent")
+            else obj.get("payment_intent")
+        )
+    else:
+        provider_id = obj.get("id") or event.get("data_id")
+    if not provider_id:
+        return None
+    return await session.scalar(
+        select(Payment.merchant_id).where(
+            Payment.provider == provider,
+            Payment.provider_payment_id == str(provider_id),
+        )
+    )
+
+
 @router.post(
     "/{provider}",
     status_code=status.HTTP_200_OK,
@@ -227,7 +273,11 @@ async def webhook_unificado(
         return {"received": True, "duplicate": True}
 
     registro = WebhookEvent(
-        provider=provider, event_id=event_id, event_type=event_type, payload=dict(event)
+        merchant_id=await _merchant_id_for_event(session, provider, event, event_type),
+        provider=provider,
+        event_id=event_id,
+        event_type=event_type,
+        payload=dict(event),
     )
     session.add(registro)
 

@@ -12,17 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import generate_api_key, hash_api_key, key_prefix
+from app.core.time import _con_zona
 from app.db.models import ApiKey, Merchant
 
 logger = logging.getLogger(__name__)
 
 # Cada cuánto se refresca `last_used_at`. Ver `resolve_key`.
 _RESOLUCION_USO = timedelta(seconds=60)
-
-
-def _con_zona(momento: datetime) -> datetime:
-    """SQLite devuelve datetimes sin zona; restarlos de uno aware lanza TypeError."""
-    return momento if momento.tzinfo else momento.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)

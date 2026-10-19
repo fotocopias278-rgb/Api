@@ -192,6 +192,25 @@ async def test_fallo_del_modelo_deja_el_comprobante_como_fallido(client, session
     assert receipt.reconciliation_status is ReconciliationStatus.PENDING
 
 
+async def test_comprobante_fallido_se_puede_reprocesar(client, session, settings, merchant):
+    receipt_id = uuid.UUID((await subir(client)).json()["id"])
+    failed = ReceiptService(
+        session,
+        merchant=merchant,
+        provider=FakeVisionProvider(error=VisionExtractionError("fallo transitorio")),
+        config=settings,
+    )
+    assert (await failed.analyze(receipt_id)).status is ReceiptStatus.FAILED
+
+    retry_provider = FakeVisionProvider(extraccion())
+    retried = await ReceiptService(
+        session, merchant=merchant, provider=retry_provider, config=settings
+    ).analyze(receipt_id)
+
+    assert retry_provider.calls == 1
+    assert retried.status is ReceiptStatus.EXTRACTED
+
+
 async def test_justificante_reutilizado_en_otro_pago_es_duplicado(client, session, settings, merchant):
     """El mismo número de operación no puede justificar dos pagos distintos."""
     primera_ref = await crear_pago(client, customer_id="cliente-a")

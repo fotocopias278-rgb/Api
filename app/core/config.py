@@ -156,8 +156,6 @@ class Settings(BaseSettings):
             )
         if self.fraud_review_threshold >= self.fraud_reject_threshold:
             errores.append("FRAUD_REVIEW_THRESHOLD debe ser menor que FRAUD_REJECT_THRESHOLD.")
-        if self.data_retention_days < 1:
-            errores.append("DATA_RETENTION_DAYS debe ser al menos 1.")
         if self.stripe_api_key and not self.stripe_webhook_secret:
             errores.append(
                 "STRIPE_API_KEY sin STRIPE_WEBHOOK_SECRET: se cobrarían pagos reales sin "

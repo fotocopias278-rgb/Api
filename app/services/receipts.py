@@ -14,6 +14,7 @@ from app.core.config import settings as default_settings
 from app.core.exceptions import NotFoundError, ValidationError, VisionExtractionError
 from app.core.files import safe_filename, verify_file_signature
 from app.core.security import sha256_hexdigest
+from app.core.time import _con_zona
 from app.db.models import FraudAssessment, Merchant, Payment, Receipt
 from app.db.models.endpoint import EventType
 from app.db.models.usage import UsageKind
@@ -144,14 +145,13 @@ class ReceiptService:
         )
         if receipt is None:
             raise NotFoundError(f"No existe el comprobante {receipt_id}.")
-        if receipt.status is not ReceiptStatus.PENDING:
+        if receipt.status is ReceiptStatus.PROCESSING:
             cutoff = datetime.now(UTC) - timedelta(minutes=20)
             updated_at = receipt.updated_at
-            if (
-                receipt.status is not ReceiptStatus.PROCESSING
-                or (updated_at and updated_at.replace(tzinfo=updated_at.tzinfo or UTC) > cutoff)
-            ):
+            if updated_at and _con_zona(updated_at) > cutoff:
                 return receipt
+        elif receipt.status not in {ReceiptStatus.PENDING, ReceiptStatus.FAILED}:
+            return receipt
         receipt.status = ReceiptStatus.PROCESSING
         await self._session.commit()
         await self._session.refresh(receipt)

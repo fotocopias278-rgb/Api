@@ -112,6 +112,12 @@ curl https://TU-APP.onrender.com/api/v1/health/ready
 
 Debe responder `database: ok` y `redis: ok`.
 
+La readiness devuelve `503` cuando Redis no está disponible. En un despliegue
+con una sola réplica, el balanceador puede retirar todo el servicio aunque la API
+siga atendiendo peticiones y el limitador esté configurado fail-open. Recuperar
+Redis restablece la readiness; vigila la salud del servicio y la conectividad a
+Upstash durante una incidencia.
+
 ---
 
 ## Tres cosas que conviene saber del plan gratuito

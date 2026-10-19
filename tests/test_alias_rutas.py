@@ -45,6 +45,7 @@ def test_el_alias_cuesta_lo_mismo_que_la_ruta_original():
 
     assert cost_for("POST", "/api/v1/receipts/validate") == cost_for("POST", "/api/v1/receipts")
     assert cost_for("POST", "/api/v1/fraud/score") == cost_for("POST", "/api/v1/fraud/evaluate")
+    assert cost_for("POST", "/api/v1/reconciliation/jobs") == 10
 
 
 async def test_el_alias_comparte_cupo_con_la_ruta_original(client_limitado):

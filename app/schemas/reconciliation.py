@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -25,6 +25,8 @@ class ReconciliationJobCreate(BaseModel):
     def _valid_period(self) -> ReconciliationJobCreate:
         if self.period_start >= self.period_end:
             raise ValueError("period_start debe ser anterior a period_end.")
+        if self.period_end - self.period_start > timedelta(days=92):
+            raise ValueError("El periodo de conciliación no puede superar 92 días.")
         return self
 
 

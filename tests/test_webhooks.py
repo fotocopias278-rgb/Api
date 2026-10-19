@@ -80,6 +80,10 @@ async def test_pago_liquidado_por_el_webhook(client, session):
     payment = await session.scalar(select(Payment).where(Payment.reference == referencia))
     assert payment.status is PaymentStatus.SUCCEEDED
     assert payment.settled_at is not None
+    webhook_event = await session.scalar(
+        select(WebhookEvent).where(WebhookEvent.event_id == "evt_1")
+    )
+    assert webhook_event.merchant_id == payment.merchant_id
 
 
 async def test_pago_fallido_guarda_el_motivo(client, session):

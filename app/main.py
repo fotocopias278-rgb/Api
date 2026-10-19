@@ -48,6 +48,7 @@ ROUTE_COSTS: tuple[tuple[str, str, int], ...] = (
     # llamar por el otro nombre para saltarse el cupo.
     ("POST", "/api/v1/receipts/validate", 10),
     ("POST", "/api/v1/payments", 5),
+    ("POST", "/api/v1/reconciliation/jobs", 10),
     ("POST", "/api/v1/fraud/evaluate", 2),
     ("POST", "/api/v1/fraud/score", 2),
 )

@@ -10,12 +10,12 @@ from typing import Any
 
 from celery.exceptions import MaxRetriesExceededError
 from celery.signals import worker_process_shutdown
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import NotFoundError
-from app.db.models import Merchant, Payment, Receipt
+from app.db.models import Merchant, Payment, Receipt, WebhookEvent
 from app.db.models.endpoint import WebhookDelivery, WebhookEndpoint
 from app.db.session import SessionFactory, engine
 from app.schemas.enums import ReceiptStatus
@@ -25,6 +25,7 @@ from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 _worker_loop: asyncio.AbstractEventLoop | None = None
+_MAX_FAILED_RECEIPT_REQUEUES = 3
 
 
 def _run_async(coroutine: Any) -> Any:
@@ -126,6 +127,11 @@ async def _requeue_stale_receipts() -> int:
                         Receipt.status == ReceiptStatus.PROCESSING,
                         Receipt.updated_at <= retry_after,
                     ),
+                    and_(
+                        Receipt.status == ReceiptStatus.FAILED,
+                        Receipt.updated_at <= retry_after,
+                        Receipt.requeue_attempts < _MAX_FAILED_RECEIPT_REQUEUES,
+                    ),
                 ),
                 or_(Receipt.last_enqueued_at.is_(None), Receipt.last_enqueued_at <= retry_after),
             )
@@ -136,6 +142,8 @@ async def _requeue_stale_receipts() -> int:
         receipts = list(due)
         for receipt in receipts:
             receipt.last_enqueued_at = now
+            if receipt.status is ReceiptStatus.FAILED:
+                receipt.requeue_attempts += 1
         await session.commit()
         receipt_ids = [receipt.id for receipt in receipts]
 
@@ -195,13 +203,57 @@ async def _anonymize_expired_payment_data_in_session(
         )
         .values(email=None, ip_address=None)
     )
+    payment_count = result.rowcount or 0
+    await session.execute(
+        delete(WebhookDelivery).where(
+            WebhookDelivery.created_at < cutoff,
+            WebhookDelivery.delivered_at.is_not(None),
+        )
+    )
+    deliveries = await session.stream_scalars(
+        select(WebhookDelivery)
+        .where(WebhookDelivery.created_at < cutoff)
+        .execution_options(yield_per=500)
+    )
+    delivery_count = 0
+    async for delivery in deliveries:
+        payload = _anonymize_payload(delivery.payload)
+        if payload != delivery.payload:
+            delivery.payload = payload
+            delivery_count += 1
+    events = await session.stream_scalars(
+        select(WebhookEvent)
+        .where(WebhookEvent.created_at < cutoff)
+        .execution_options(yield_per=500)
+    )
+    event_count = 0
+    async for event in events:
+        payload = _anonymize_payload(event.payload)
+        if payload != event.payload:
+            event.payload = payload
+            event_count += 1
     await session.commit()
-    count = result.rowcount or 0
     logger.info(
         "privacy.expired_payment_data_anonymized",
-        extra={"count": count, "retention_days": retention_days},
+        extra={
+            "payments": payment_count,
+            "webhook_deliveries": delivery_count,
+            "webhook_events": event_count,
+            "retention_days": retention_days,
+        },
     )
-    return count
+    return payment_count
+
+
+def _anonymize_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: None if key in {"email", "ip", "ip_address"} else _anonymize_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_anonymize_payload(item) for item in value]
+    return value
 
 
 async def _requeue_stale_webhooks() -> int:
@@ -226,7 +278,7 @@ async def _requeue_stale_webhooks() -> int:
             )
             .order_by(WebhookDelivery.created_at)
             .limit(100)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=WebhookDelivery)
         )
         deliveries = list(due)
         for delivery in deliveries:

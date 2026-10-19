@@ -239,14 +239,6 @@ class PaymentService:
         if payment is None:
             raise NotFoundError(f"No existe el pago {reference}.")
         if not idempotency_key:
-            if payment.status not in {
-                PaymentStatus.SUCCEEDED,
-                PaymentStatus.PARTIALLY_REFUNDED,
-            }:
-                raise ConflictError(
-                    f"Solo se pueden devolver pagos cobrados; estado actual: {payment.status}.",
-                    details={"reference": reference, "status": payment.status},
-                )
             raise ValidationError("La devolución requiere la cabecera Idempotency-Key.")
 
         operation = await self._session.scalar(
@@ -344,6 +336,9 @@ class PaymentService:
         if payment.provider_payment_id is None:
             raise ConflictError("El pago no tiene identificador en la pasarela.")
 
+        # También en el replay se libera el bloqueo antes de la llamada de red.
+        await self._session.commit()
+
         try:
             resultado = await self._gateway_for(payment.provider).refund(
                 provider_payment_id=payment.provider_payment_id,
@@ -431,28 +426,29 @@ class PaymentService:
     @staticmethod
     def _request_hash(data: PaymentCreate) -> str:
         canonical = json.dumps(
-            data.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+            {
+                "customer_id": data.customer_id,
+                "amount_minor": data.amount_minor,
+                "currency": data.currency,
+                "method": data.method.value,
+                "provider": data.provider,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode()
         return hashlib.sha256(canonical).hexdigest()
 
     def _validate_idempotent_replay(self, payment: Payment, request_hash: str) -> None:
-        if payment.idempotency_payload_hash:
-            existing_hash = payment.idempotency_payload_hash
-        else:
-            legacy_data = PaymentCreate(
-                customer_id=payment.customer_id,
-                amount_minor=payment.amount_minor,
-                currency=payment.currency,
-                method=payment.method,
-                email=payment.email,
-                ip_address=payment.ip_address,
-                card_bin=payment.card_bin,
-                card_country=payment.card_country,
-                ip_country=payment.ip_country,
-                meta=payment.meta,
-            )
-            existing_hash = self._request_hash(legacy_data)
-        if existing_hash != request_hash:
+        if payment.idempotency_payload_hash == request_hash:
+            return
+        stored_request = PaymentCreate(
+            customer_id=payment.customer_id,
+            amount_minor=payment.amount_minor,
+            currency=payment.currency,
+            method=payment.method,
+            provider=payment.provider,
+        )
+        if self._request_hash(stored_request) != request_hash:
             raise ConflictError(
                 "La clave de idempotencia ya se usó con otra petición."
             )

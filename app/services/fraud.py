@@ -160,7 +160,7 @@ RECEIPT_SIGNALS: dict[str, tuple[str, int]] = {
 class FraudEngine:
     """Aplica las reglas y traduce la puntuación en una decisión."""
 
-    VERSION = "rules-v1"
+    VERSION = "rules-v2"
 
     def __init__(self, config: Settings | None = None, rules: Iterable[Rule] | None = None) -> None:
         self._settings = config or default_settings
@@ -194,6 +194,7 @@ class FraudEngine:
 
     def evaluate_signals(self, codes: Iterable[str]) -> FraudEvaluationResponse:
         """Puntúa señales ya identificadas (p. ej. las de un comprobante)."""
+        # STATISTICAL_ANOMALY se produce solo desde FraudContext, no desde el OCR.
         signals = [
             FraudSignalRead(code=code, description=RECEIPT_SIGNALS[code][0],
                             weight=RECEIPT_SIGNALS[code][1])

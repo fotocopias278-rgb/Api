@@ -59,6 +59,7 @@ async def test_crea_job_conteos_y_discrepancias_por_tipo(client, session):
     session.add(
         WebhookEvent(
             provider="stripe",
+            merchant_id=MERCHANT_ID,
             event_id="evt_gateway_orphan",
             event_type="payment_intent.succeeded",
             payload={
@@ -100,8 +101,20 @@ async def test_crea_job_conteos_y_discrepancias_por_tipo(client, session):
 
 
 async def test_job_se_aísla_por_comercio(client, session):
+    session.add(
+        WebhookEvent(
+            provider="stripe",
+            merchant_id=MERCHANT_ID,
+            event_id="evt_private_to_merchant_one",
+            event_type="payment_intent.succeeded",
+            payload={
+                "data": {"object": {"id": "unknown-merchant-one-payment"}}
+            },
+        )
+    )
     start = datetime.now(UTC) - timedelta(days=1)
     end = datetime.now(UTC) + timedelta(days=1)
+    await session.commit()
     created = await client.post(
         "/api/v1/reconciliation/jobs",
         json={"period_start": start.isoformat(), "period_end": end.isoformat()},
@@ -112,11 +125,20 @@ async def test_job_se_aísla_por_comercio(client, session):
     own = await client.get(
         f"/api/v1/reconciliation/jobs/{job_id}", headers=AUTH_HEADERS
     )
+    foreign_job = await client.post(
+        "/api/v1/reconciliation/jobs",
+        json={"period_start": start.isoformat(), "period_end": end.isoformat()},
+        headers=AUTH_HEADERS_OTRO,
+    )
     foreign = await client.get(
-        f"/api/v1/reconciliation/jobs/{job_id}", headers=AUTH_HEADERS_OTRO
+        f"/api/v1/reconciliation/jobs/{foreign_job.json()['id']}",
+        headers=AUTH_HEADERS_OTRO,
     )
     assert own.status_code == 200
-    assert foreign.status_code == 404
+    assert foreign.status_code == 200
+    assert "evt_private_to_merchant_one" not in {
+        row["webhook_event_id"] for row in foreign.json()["discrepancies"]
+    }
     assert await session.get(ReconciliationJob, UUID(job_id))
 
 
@@ -125,6 +147,17 @@ async def test_rechaza_periodo_invalido(client):
     response = await client.post(
         "/api/v1/reconciliation/jobs",
         json={"period_start": instant, "period_end": instant},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+async def test_rechaza_periodo_mayor_a_92_dias(client):
+    start = datetime(1970, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=400)
+    response = await client.post(
+        "/api/v1/reconciliation/jobs",
+        json={"period_start": start.isoformat(), "period_end": end.isoformat()},
         headers=AUTH_HEADERS,
     )
     assert response.status_code == 422

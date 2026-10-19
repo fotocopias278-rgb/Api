@@ -97,6 +97,22 @@ async def test_reusar_la_clave_con_otro_cliente_es_conflicto(client):
     assert conflicto.status_code == 409
 
 
+async def test_replay_de_pago_ignora_ip_y_meta_volatiles(client):
+    headers = {**AUTH_HEADERS, "Idempotency-Key": "clave-retry-ip"}
+    first = await client.post(
+        "/api/v1/payments",
+        json=cuerpo(ip_address="203.0.113.10", meta={"attempt": 1}),
+        headers=headers,
+    )
+    replay = await client.post(
+        "/api/v1/payments",
+        json=cuerpo(ip_address="203.0.113.11", meta={"attempt": 2}),
+        headers=headers,
+    )
+    assert first.status_code == replay.status_code == 201
+    assert replay.json()["reference"] == first.json()["reference"]
+
+
 @pytest.mark.parametrize(
     "invalido",
     [
@@ -122,7 +138,7 @@ async def test_consultar_pago_incluye_el_historial_de_riesgo(client):
     body = response.json()
     assert body["reference"] == reference
     assert len(body["assessments"]) == 1
-    assert body["assessments"][0]["engine_version"] == "rules-v1"
+    assert body["assessments"][0]["engine_version"] == "rules-v2"
 
 
 async def test_consultar_pago_inexistente(client):
@@ -201,7 +217,7 @@ async def test_devolucion_solo_sobre_pagos_cobrados(client, session):
 
     # Recién creado está en curso, no liquidado.
     en_curso = await client.post(f"/api/v1/payments/{reference}/refund", headers=AUTH_HEADERS)
-    assert en_curso.status_code == 409
+    assert en_curso.status_code == 422
 
     payment = await session.scalar(select(Payment).where(Payment.reference == reference))
     payment.status = PaymentStatus.SUCCEEDED
@@ -314,6 +330,54 @@ async def test_devolucion_usa_la_pasarela_guardada_en_el_pago(
     assert result.status is PaymentStatus.PARTIALLY_REFUNDED
     assert gateway.arguments["provider_payment_id"] == "mp-payment-1"
     assert gateway.arguments["currency"] == "COP"
+
+
+async def test_replay_de_refund_libera_el_lock_antes_de_llamar_a_pasarela(
+    session, merchant, settings
+):
+    from app.db.models.refund import RefundOperation
+    from app.schemas.enums import PaymentMethod
+
+    payment = Payment(
+        merchant_id=merchant.id,
+        reference="pay_refund_replay_lock",
+        customer_id="cliente-replay",
+        amount_minor=5_000,
+        currency="EUR",
+        method=PaymentMethod.CARD,
+        status=PaymentStatus.SUCCEEDED,
+        provider_payment_id="pi_refund_replay_lock",
+    )
+    session.add(payment)
+    await session.flush()
+    operation = RefundOperation(
+        merchant_id=merchant.id,
+        payment_id=payment.id,
+        idempotency_key="refund-replay-lock",
+        requested_amount_minor=1_000,
+        amount_minor=1_000,
+        status="pending",
+    )
+    session.add(operation)
+    await session.commit()
+
+    class Gateway:
+        async def refund(self, **kwargs):
+            assert not session.in_transaction()
+            return GatewayCharge(
+                provider_payment_id=kwargs["provider_payment_id"],
+                status="succeeded",
+                raw={"id": "replay-lock-refund"},
+            )
+
+    result = await PaymentService(
+        session, merchant=merchant, gateway=Gateway(), config=settings
+    ).refund(
+        payment.reference,
+        amount_minor=1_000,
+        idempotency_key="refund-replay-lock",
+    )
+    assert result.refunded_amount_minor == 1_000
 
 
 async def test_devolucion_fallida_libera_la_reserva_y_no_reutiliza_la_clave(

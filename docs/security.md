@@ -11,16 +11,19 @@
   entorno ni redirecciones automáticas.
 - Límite de tamaño de comprobante, verificación de firma binaria y almacenamiento
   local confinado a su raíz o S3-compatible.
-- Tarea periódica `privacy.anonymize_expired` que borra `email` e `ip_address` de
-  pagos con más antigüedad que `DATA_RETENTION_DAYS` (180 días por defecto).
+- Tarea periódica `privacy.anonymize_expired` que, al vencer `DATA_RETENTION_DAYS`
+  (180 días por defecto), borra `email` e `ip_address` de pagos, elimina entregas de
+  webhook ya entregadas y anonimiza las claves `email`, `ip` e `ip_address` de los
+  payloads retenidos de entregas y eventos entrantes.
 
 ## Límites importantes
 
-- La defensa SSRF de aplicación no sustituye reglas de firewall/egress contra redes
-  privadas, metadata endpoints y DNS rebinding.
-- La tarea de retención **solo anonimiza email e IP en pagos**. No borra imágenes de
-  recibos, datos extraídos, eventos de webhook ni otros campos; una política legal
-  completa debe definir explícitamente conservación y borrado para cada categoría.
+- La defensa SSRF resuelve DNS antes de enviar, pero httpx vuelve a resolver el host
+  al conectar: existe una ventana TOCTOU para DNS rebinding. No sustituye reglas de
+  firewall/egress que bloqueen redes privadas y endpoints de metadata.
+- La retención cubre email/IP de pagos y payloads de webhooks; no borra imágenes de
+  recibos, datos extraídos ni otros campos personales. Los ficheros y OCR de
+  comprobantes requieren una política de conservación y borrado independiente.
 - La entrega saliente es al menos una vez; los receptores deben deduplicar por
   `X-FinAI-Delivery`.
 - El límite de archivo del endpoint no reemplaza un límite de tamaño del cuerpo HTTP

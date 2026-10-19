@@ -55,6 +55,7 @@ class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     confidence: Mapped[float | None] = mapped_column(Float, default=None)
     reconciliation_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
     error_message: Mapped[str | None] = mapped_column(String(512), default=None)
+    requeue_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     payment: Mapped[Payment | None] = relationship(back_populates="receipts", lazy="selectin")
 

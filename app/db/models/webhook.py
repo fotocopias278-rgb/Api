@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -16,6 +17,9 @@ class WebhookEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "webhook_events"
 
+    merchant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("merchants.id", ondelete="CASCADE"), nullable=True
+    )
     provider: Mapped[str] = mapped_column(String(32), default="stripe")
     # Único por proveedor, no global: dos pasarelas pueden emitir el mismo
     # número de evento y tratarlos como repetidos haría perder avisos.
@@ -27,4 +31,5 @@ class WebhookEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("provider", "event_id", name="uq_webhook_events_provider_event"),
+        Index("ix_webhook_events_merchant_created", "merchant_id", "created_at"),
     )
