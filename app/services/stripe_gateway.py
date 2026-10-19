@@ -77,6 +77,7 @@ class StripeGateway:
         *,
         provider_payment_id: str,
         amount_minor: int | None = None,
+        currency: str = "EUR",
         reason: str | None = None,
         idempotency_key: str | None = None,
     ) -> GatewayCharge:

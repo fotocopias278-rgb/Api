@@ -40,5 +40,9 @@ celery_app.conf.update(
             "task": "webhooks.requeue_stale",
             "schedule": 60.0,
         },
+        "anonymize-expired-payment-data": {
+            "task": "privacy.anonymize_expired",
+            "schedule": 86_400.0,
+        },
     },
 )

@@ -1,0 +1,3127 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FinAI Gateway",
+    "description": "\nAPI de validación de pagos, detección de fraude en tiempo real y conciliación\nautomatizada de comprobantes bancarios mediante visión computacional.\n\n**Autenticación:** todas las rutas salvo `/health` y los webhooks requieren la\ncabecera `X-API-Key`. El webhook de Stripe se autentica con su firma HMAC.\n",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "salud"
+        ],
+        "summary": "Liveness",
+        "description": "El proceso está vivo. No comprueba dependencias.",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "tags": [
+          "salud"
+        ],
+        "summary": "Readiness",
+        "description": "Comprueba las dependencias externas antes de recibir tráfico.",
+        "operationId": "readiness_api_v1_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/merchants": {
+      "post": {
+        "tags": [
+          "administración"
+        ],
+        "summary": "Dar de alta un comercio",
+        "operationId": "create_merchant_api_v1_admin_merchants_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MerchantCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "administración"
+        ],
+        "summary": "Listar comercios",
+        "operationId": "list_merchants_api_v1_admin_merchants_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MerchantRead"
+                  },
+                  "title": "Response List Merchants Api V1 Admin Merchants Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/merchants/{merchant_id}/keys": {
+      "post": {
+        "tags": [
+          "administración"
+        ],
+        "summary": "Emitir una clave de API",
+        "description": "Emite una clave para el comercio.\n\n**El secreto se devuelve una sola vez.** En la base solo queda su huella,\nasí que no hay forma de volver a mostrarlo: si se pierde, se revoca y se\nemite otro.",
+        "operationId": "issue_key_api_v1_admin_merchants__merchant_id__keys_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "merchant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del comercio.",
+              "title": "Merchant Id"
+            },
+            "description": "Identificador del comercio."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyIssued"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "administración"
+        ],
+        "summary": "Listar las claves de un comercio",
+        "operationId": "list_keys_api_v1_admin_merchants__merchant_id__keys_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "merchant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del comercio.",
+              "title": "Merchant Id"
+            },
+            "description": "Identificador del comercio."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApiKeyRead"
+                  },
+                  "title": "Response List Keys Api V1 Admin Merchants  Merchant Id  Keys Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/merchants/{merchant_id}/keys/{key_id}": {
+      "delete": {
+        "tags": [
+          "administración"
+        ],
+        "summary": "Revocar una clave",
+        "operationId": "revoke_key_api_v1_admin_merchants__merchant_id__keys__key_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "merchant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del comercio.",
+              "title": "Merchant Id"
+            },
+            "description": "Identificador del comercio."
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador de la clave.",
+              "title": "Key Id"
+            },
+            "description": "Identificador de la clave."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "tags": [
+          "consumo"
+        ],
+        "summary": "Consumo propio",
+        "description": "Consumo del comercio autenticado, para que concilie su factura.",
+        "operationId": "my_usage_api_v1_usage_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "desde",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inicio del periodo (inclusive).",
+              "title": "Desde"
+            },
+            "description": "Inicio del periodo (inclusive)."
+          },
+          {
+            "name": "hasta",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fin del periodo (exclusive).",
+              "title": "Hasta"
+            },
+            "description": "Fin del periodo (exclusive)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/merchants/{merchant_id}/usage": {
+      "get": {
+        "tags": [
+          "consumo"
+        ],
+        "summary": "Consumo de un comercio",
+        "operationId": "merchant_usage_api_v1_admin_merchants__merchant_id__usage_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "merchant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Comercio a consultar.",
+              "title": "Merchant Id"
+            },
+            "description": "Comercio a consultar."
+          },
+          {
+            "name": "desde",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inicio del periodo (inclusive).",
+              "title": "Desde"
+            },
+            "description": "Inicio del periodo (inclusive)."
+          },
+          {
+            "name": "hasta",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fin del periodo (exclusive).",
+              "title": "Hasta"
+            },
+            "description": "Fin del periodo (exclusive)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-endpoints": {
+      "get": {
+        "tags": [
+          "webhooks salientes"
+        ],
+        "summary": "Listar destinos",
+        "operationId": "list_endpoints_api_v1_webhook_endpoints_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointRead"
+                  },
+                  "type": "array",
+                  "title": "Response List Endpoints Api V1 Webhook Endpoints Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "webhooks salientes"
+        ],
+        "summary": "Registrar un destino de webhook",
+        "description": "Registra una URL a la que avisar.\n\nEl secreto se genera aquí si no lo aportas, y **sí se puede consultar\ndespués**: a diferencia de una clave de API, no da acceso a nada — sirve\npara que verifiques que el aviso viene de nosotros.",
+        "operationId": "create_endpoint_api_v1_webhook_endpoints_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEndpointCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/webhook-endpoints/{endpoint_id}": {
+      "delete": {
+        "tags": [
+          "webhooks salientes"
+        ],
+        "summary": "Eliminar un destino",
+        "operationId": "delete_endpoint_api_v1_webhook_endpoints__endpoint_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del destino.",
+              "title": "Endpoint Id"
+            },
+            "description": "Identificador del destino."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments": {
+      "post": {
+        "tags": [
+          "pagos"
+        ],
+        "summary": "Crear y evaluar un pago",
+        "description": "Crea el pago, lo puntúa y lo envía a la pasarela si el riesgo lo permite.\n\nUn bloqueo por riesgo **no** es un error HTTP: la respuesta es 201 y el\nveredicto viaja en `status` (`rejected`, `under_review`) junto con\n`risk_score` y `risk_decision`.",
+        "operationId": "create_payment_api_v1_payments_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reintentar con la misma clave devuelve el resultado original.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Reintentar con la misma clave devuelve el resultado original."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "pagos"
+        ],
+        "summary": "Listar pagos",
+        "operationId": "list_payments_api_v1_payments_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Customer Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PaymentStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PaymentRead_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/{reference}": {
+      "get": {
+        "tags": [
+          "pagos"
+        ],
+        "summary": "Consultar un pago",
+        "description": "Devuelve el pago junto con su historial de evaluaciones de riesgo.",
+        "operationId": "get_payment_api_v1_payments__reference__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "Referencia pública del pago.",
+              "title": "Reference"
+            },
+            "description": "Referencia pública del pago."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/{reference}/refund": {
+      "post": {
+        "tags": [
+          "pagos"
+        ],
+        "summary": "Devolver un pago",
+        "operationId": "refund_payment_api_v1_payments__reference__refund_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "Referencia pública del pago.",
+              "title": "Reference"
+            },
+            "description": "Referencia pública del pago."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reintentar con la misma clave devuelve el resultado original.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Reintentar con la misma clave devuelve el resultado original."
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefundRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/{reference}/review": {
+      "post": {
+        "tags": [
+          "pagos"
+        ],
+        "summary": "Resolver un pago en revisión manual",
+        "description": "Cierra manualmente un pago retenido por el motor de riesgo.",
+        "operationId": "review_payment_api_v1_payments__reference__review_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "Referencia pública del pago.",
+              "title": "Reference"
+            },
+            "description": "Referencia pública del pago."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_review_payment_api_v1_payments__reference__review_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fraud/score": {
+      "post": {
+        "tags": [
+          "fraude"
+        ],
+        "summary": "Alias de POST /fraud/evaluate",
+        "description": "Idéntico a `POST /fraud/evaluate`. Existe para el contrato maestro; ambas rutas comparten manejador, así que no pueden divergir.",
+        "operationId": "evaluate_api_v1_fraud_score_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FraudEvaluationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FraudEvaluationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/fraud/evaluate": {
+      "post": {
+        "tags": [
+          "fraude"
+        ],
+        "summary": "Puntuar una operación sin cobrarla",
+        "description": "Devuelve la puntuación de riesgo que tendría la operación.\n\nÚtil para decidir antes de cobrar: usa los mismos agregados históricos y las\nmismas reglas que `POST /payments`, pero no crea ningún pago.",
+        "operationId": "evaluate_api_v1_fraud_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FraudEvaluationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FraudEvaluationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/receipts/validate": {
+      "post": {
+        "tags": [
+          "comprobantes"
+        ],
+        "summary": "Alias de POST /receipts",
+        "description": "Idéntico a `POST /receipts`. Existe para el contrato maestro; ambas rutas comparten manejador, así que no pueden divergir.",
+        "operationId": "upload_receipt_api_v1_receipts_validate_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_receipt_api_v1_receipts_validate_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/receipts": {
+      "post": {
+        "tags": [
+          "comprobantes"
+        ],
+        "summary": "Subir un comprobante para su análisis",
+        "description": "Registra el comprobante y encola su extracción con IA.\n\nResponde 202: la lectura del documento ocurre en segundo plano; el resultado\nse consulta en `GET /receipts/{id}`.",
+        "operationId": "upload_receipt_api_v1_receipts_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_receipt_api_v1_receipts_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/receipts/{receipt_id}": {
+      "get": {
+        "tags": [
+          "comprobantes"
+        ],
+        "summary": "Consultar un comprobante",
+        "description": "Devuelve el estado del análisis y, si terminó, los datos extraídos.",
+        "operationId": "get_receipt_api_v1_receipts__receipt_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "receipt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del comprobante.",
+              "title": "Receipt Id"
+            },
+            "description": "Identificador del comprobante."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reconciliation/jobs": {
+      "post": {
+        "tags": [
+          "conciliación"
+        ],
+        "summary": "Generar informe de conciliación por periodo",
+        "operationId": "create_reconciliation_job_api_v1_reconciliation_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationJobCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reconciliation/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "conciliación"
+        ],
+        "summary": "Consultar un informe de conciliación",
+        "operationId": "get_reconciliation_job_api_v1_reconciliation_jobs__job_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identificador del trabajo.",
+              "title": "Job Id"
+            },
+            "description": "Identificador del trabajo."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/stripe": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Webhook de Stripe",
+        "description": "Procesa un evento de Stripe de forma idempotente.\n\nStripe reintenta cada evento hasta recibir un 2xx, así que un `event_id` ya\nvisto se confirma sin volver a aplicar el cambio de estado.",
+        "operationId": "stripe_webhook_api_v1_webhooks_stripe_post",
+        "parameters": [
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stripe-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Stripe Webhook Api V1 Webhooks Stripe Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{provider}": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Webhook unificado por proveedor",
+        "description": "Recibe avisos de cualquier pasarela soportada.\n\nLa unicidad se comprueba por `(provider, event_id)` y no solo por el\nidentificador: dos proveedores distintos pueden emitir el mismo número y\ntratarlos como repetidos haría perder avisos.",
+        "operationId": "webhook_unificado_api_v1_webhooks__provider__post",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "stripe | mercadopago",
+              "title": "Provider"
+            },
+            "description": "stripe | mercadopago"
+          },
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stripe-Signature"
+            }
+          },
+          {
+            "name": "x-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Webhook Unificado Api V1 Webhooks  Provider  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiKeyCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "default": "default"
+          }
+        },
+        "type": "object",
+        "title": "ApiKeyCreate"
+      },
+      "ApiKeyIssued": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "secret": {
+            "type": "string",
+            "title": "Secret",
+            "description": "Guárdala ahora: no se puede recuperar, solo revocar y emitir otra."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "last_used_at",
+          "revoked_at",
+          "created_at",
+          "secret"
+        ],
+        "title": "ApiKeyIssued",
+        "description": "Respuesta al emitir: la única vez que el secreto viaja."
+      },
+      "ApiKeyRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "last_used_at",
+          "revoked_at",
+          "created_at"
+        ],
+        "title": "ApiKeyRead",
+        "description": "Una clave ya emitida. Nunca incluye el secreto."
+      },
+      "Body_review_payment_api_v1_payments__reference__review_post": {
+        "properties": {
+          "approve": {
+            "type": "boolean",
+            "title": "Approve",
+            "description": "True para cobrar, False para rechazar."
+          }
+        },
+        "type": "object",
+        "required": [
+          "approve"
+        ],
+        "title": "Body_review_payment_api_v1_payments__reference__review_post"
+      },
+      "Body_upload_receipt_api_v1_receipts_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Imagen o PDF del comprobante."
+          },
+          "payment_reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Reference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_receipt_api_v1_receipts_post"
+      },
+      "Body_upload_receipt_api_v1_receipts_validate_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Imagen o PDF del comprobante."
+          },
+          "payment_reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Reference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_receipt_api_v1_receipts_validate_post"
+      },
+      "DiscrepancyKind": {
+        "type": "string",
+        "enum": [
+          "amount_mismatch",
+          "duplicate_receipt",
+          "missing_receipt",
+          "orphan_receipt",
+          "unreadable_receipt",
+          "gateway_without_payment"
+        ],
+        "title": "DiscrepancyKind",
+        "description": "Tipos de desajuste que el informe de conciliación sabe nombrar."
+      },
+      "DiscrepancyRead": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DiscrepancyKind"
+          },
+          "payment_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Reference"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "webhook_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Event Id"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "detail"
+        ],
+        "title": "DiscrepancyRead"
+      },
+      "DocumentType": {
+        "type": "string",
+        "enum": [
+          "transfer_receipt",
+          "deposit_slip",
+          "app_screenshot",
+          "other",
+          "unreadable"
+        ],
+        "title": "DocumentType"
+      },
+      "FraudAssessmentRead": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RiskDecision"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "signals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Signals"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "decision",
+          "engine_version",
+          "signals",
+          "created_at"
+        ],
+        "title": "FraudAssessmentRead"
+      },
+      "FraudEvaluationRequest": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Customer Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "card_bin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8,
+                "minLength": 6,
+                "pattern": "^\\d+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Bin"
+          },
+          "card_country": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Country"
+          },
+          "ip_country": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Country"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "amount_minor",
+          "currency"
+        ],
+        "title": "FraudEvaluationRequest",
+        "description": "Evaluación sin persistencia: permite puntuar antes de cobrar."
+      },
+      "FraudEvaluationResponse": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RiskDecision"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/FraudSignalRead"
+            },
+            "type": "array",
+            "title": "Signals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "decision",
+          "engine_version",
+          "signals"
+        ],
+        "title": "FraudEvaluationResponse"
+      },
+      "FraudSignalRead": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "weight": {
+            "type": "integer",
+            "title": "Weight"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "description",
+          "weight"
+        ],
+        "title": "FraudSignalRead"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "environment": {
+            "type": "string",
+            "title": "Environment"
+          },
+          "checks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Checks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "environment"
+        ],
+        "title": "HealthResponse"
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "JobStatus"
+      },
+      "MerchantCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MerchantCreate"
+      },
+      "MerchantRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_active",
+          "meta",
+          "created_at"
+        ],
+        "title": "MerchantRead"
+      },
+      "Page_PaymentRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PaymentRead]"
+      },
+      "PaymentCreate": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Customer Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "maximum": 1000000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Minor",
+            "description": "Importe en unidades mínimas."
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "pattern": "^[A-Za-z]{3}$",
+            "title": "Currency"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod",
+            "default": "card"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "stripe",
+              "mercadopago"
+            ],
+            "title": "Provider",
+            "default": "stripe"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 45
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
+          "card_bin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8,
+                "minLength": 6,
+                "pattern": "^\\d+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Bin"
+          },
+          "card_country": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Country"
+          },
+          "ip_country": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Country"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "amount_minor",
+          "currency"
+        ],
+        "title": "PaymentCreate",
+        "description": "Petición de creación de un pago."
+      },
+      "PaymentDetail": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "refunded_amount_minor": {
+            "type": "integer",
+            "title": "Refunded Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "provider_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Payment Id"
+          },
+          "risk_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Score"
+          },
+          "risk_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/FraudAssessmentRead"
+            },
+            "type": "array",
+            "title": "Assessments"
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount",
+            "description": "Importe legible en la divisa del pago.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference",
+          "customer_id",
+          "amount_minor",
+          "refunded_amount_minor",
+          "currency",
+          "status",
+          "method",
+          "provider",
+          "provider_payment_id",
+          "risk_score",
+          "risk_decision",
+          "failure_reason",
+          "settled_at",
+          "meta",
+          "created_at",
+          "updated_at",
+          "amount"
+        ],
+        "title": "PaymentDetail",
+        "description": "Pago con su historial de evaluaciones de riesgo."
+      },
+      "PaymentMethod": {
+        "type": "string",
+        "enum": [
+          "card",
+          "bank_transfer"
+        ],
+        "title": "PaymentMethod"
+      },
+      "PaymentRead": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "refunded_amount_minor": {
+            "type": "integer",
+            "title": "Refunded Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "provider_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Payment Id"
+          },
+          "risk_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Score"
+          },
+          "risk_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount",
+            "description": "Importe legible en la divisa del pago.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference",
+          "customer_id",
+          "amount_minor",
+          "refunded_amount_minor",
+          "currency",
+          "status",
+          "method",
+          "provider",
+          "provider_payment_id",
+          "risk_score",
+          "risk_decision",
+          "failure_reason",
+          "settled_at",
+          "meta",
+          "created_at",
+          "updated_at",
+          "amount"
+        ],
+        "title": "PaymentRead",
+        "description": "Representación pública de un pago."
+      },
+      "PaymentStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "under_review",
+          "processing",
+          "succeeded",
+          "failed",
+          "rejected",
+          "partially_refunded",
+          "refunded"
+        ],
+        "title": "PaymentStatus"
+      },
+      "ReceiptAccepted": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReceiptStatus"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Of",
+            "description": "Comprobante previo con idéntico contenido."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "ReceiptAccepted",
+        "description": "Respuesta 202: el análisis continúa en segundo plano."
+      },
+      "ReceiptExtraction": {
+        "properties": {
+          "document_type": {
+            "$ref": "#/components/schemas/DocumentType",
+            "description": "Naturaleza del documento."
+          },
+          "is_legible": {
+            "type": "boolean",
+            "title": "Is Legible",
+            "description": "False si la imagen no permite leer los datos."
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name",
+            "description": "Entidad emisora tal y como aparece."
+          },
+          "operation_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Number",
+            "description": "Número de operación, referencia o localizador."
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount",
+            "description": "Importe normalizado con punto decimal, sin separador de miles ni símbolo de divisa. Ejemplo: '1234.56'."
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency",
+            "description": "Código ISO-4217 de tres letras, p. ej. 'EUR'."
+          },
+          "transaction_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Date",
+            "description": "Fecha y hora de la operación en formato ISO-8601."
+          },
+          "sender_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Name",
+            "description": "Ordenante de la transferencia."
+          },
+          "sender_account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Account",
+            "description": "Cuenta origen, tal como se muestre."
+          },
+          "receiver_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receiver Name",
+            "description": "Beneficiario."
+          },
+          "receiver_account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receiver Account",
+            "description": "Cuenta destino, tal como se muestre."
+          },
+          "concept": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept",
+            "description": "Concepto o descripción de la operación."
+          },
+          "tampering_indicators": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tampering Indicators",
+            "description": "Indicios de manipulación observados: tipografías inconsistentes, bordes retocados, alineaciones imposibles. Lista vacía si no hay."
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "description": "Confianza global en la extracción, de 0 a 1."
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_type",
+          "is_legible",
+          "bank_name",
+          "operation_number",
+          "amount",
+          "currency",
+          "transaction_date",
+          "sender_name",
+          "sender_account",
+          "receiver_name",
+          "receiver_account",
+          "concept",
+          "tampering_indicators",
+          "confidence"
+        ],
+        "title": "ReceiptExtraction",
+        "description": "Datos extraídos de un comprobante bancario."
+      },
+      "ReceiptRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "payment_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Reference"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "content_sha256": {
+            "type": "string",
+            "title": "Content Sha256"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReceiptStatus"
+          },
+          "reconciliation_status": {
+            "$ref": "#/components/schemas/ReconciliationStatus"
+          },
+          "extraction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReceiptExtraction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "reconciliation_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reconciliation Notes"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "filename",
+          "content_type",
+          "size_bytes",
+          "content_sha256",
+          "status",
+          "reconciliation_status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReceiptRead"
+      },
+      "ReceiptStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "processing",
+          "extracted",
+          "failed"
+        ],
+        "title": "ReceiptStatus"
+      },
+      "ReconciliationJobCreate": {
+        "properties": {
+          "period_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period Start"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period_start",
+          "period_end"
+        ],
+        "title": "ReconciliationJobCreate"
+      },
+      "ReconciliationJobRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period Start"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period End"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "total_payments": {
+            "type": "integer",
+            "title": "Total Payments"
+          },
+          "matched_count": {
+            "type": "integer",
+            "title": "Matched Count"
+          },
+          "mismatched_count": {
+            "type": "integer",
+            "title": "Mismatched Count"
+          },
+          "pending_count": {
+            "type": "integer",
+            "title": "Pending Count"
+          },
+          "duplicate_count": {
+            "type": "integer",
+            "title": "Duplicate Count"
+          },
+          "unmatched_receipts_count": {
+            "type": "integer",
+            "title": "Unmatched Receipts Count"
+          },
+          "discrepancies": {
+            "items": {
+              "$ref": "#/components/schemas/DiscrepancyRead"
+            },
+            "type": "array",
+            "title": "Discrepancies"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "period_start",
+          "period_end",
+          "status",
+          "total_payments",
+          "matched_count",
+          "mismatched_count",
+          "pending_count",
+          "duplicate_count",
+          "unmatched_receipts_count",
+          "discrepancies",
+          "error_message",
+          "completed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReconciliationJobRead"
+      },
+      "ReconciliationStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "matched",
+          "mismatched",
+          "duplicate",
+          "unreadable"
+        ],
+        "title": "ReconciliationStatus"
+      },
+      "RefundRequest": {
+        "properties": {
+          "amount_minor": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Minor",
+            "description": "Importe a devolver; por defecto, el total."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "RefundRequest"
+      },
+      "RiskDecision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "review",
+          "reject"
+        ],
+        "title": "RiskDecision"
+      },
+      "UsageSummary": {
+        "properties": {
+          "merchant_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Merchant Id"
+          },
+          "desde": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desde"
+          },
+          "hasta": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hasta"
+          },
+          "totals": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Totals",
+            "description": "Unidades por tipo de hecho: cobros, comprobantes y extracciones."
+          }
+        },
+        "type": "object",
+        "required": [
+          "merchant_id",
+          "totals"
+        ],
+        "title": "UsageSummary",
+        "description": "Totales facturables de un comercio en un periodo."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WebhookEndpointCreate": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2083,
+            "minLength": 1,
+            "format": "uri",
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret",
+            "description": "Se genera uno si no lo aportas."
+          },
+          "event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Event Types",
+            "description": "Vacío = todos los eventos.",
+            "examples": [
+              [
+                "payment.updated",
+                "receipt.reconciled"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "WebhookEndpointCreate"
+      },
+      "WebhookEndpointRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "secret": {
+            "type": "string",
+            "title": "Secret"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Event Types"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "secret",
+          "is_active",
+          "event_types",
+          "created_at"
+        ],
+        "title": "WebhookEndpointRead"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}

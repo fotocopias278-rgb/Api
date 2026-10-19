@@ -25,10 +25,6 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.mercadopago.com"
 
-# Mercado Pago no usa unidades mínimas: envía el importe como decimal.
-_EXPONENTES_SIN_DECIMALES = frozenset({"CLP", "COP", "PYG"})
-
-
 class MercadoPagoGateway:
     def __init__(
         self, config: Settings | None = None, client: httpx.AsyncClient | None = None
@@ -45,8 +41,6 @@ class MercadoPagoGateway:
         """Convierte a la unidad que espera la API del proveedor."""
         from app.core.money import to_decimal
 
-        if currency.upper() in _EXPONENTES_SIN_DECIMALES:
-            return float(amount_minor)
         return float(to_decimal(amount_minor, currency))
 
     def _http(self) -> tuple[httpx.AsyncClient, bool]:
@@ -74,6 +68,7 @@ class MercadoPagoGateway:
 
         cuerpo = {
             "transaction_amount": self._a_decimal(amount_minor, currency),
+            "currency_id": currency.upper(),
             "description": f"Pago {reference}",
             "external_reference": reference,
             "metadata": {"customer_id": customer_id, **(metadata or {})},
@@ -85,7 +80,10 @@ class MercadoPagoGateway:
                 json=cuerpo,
                 # Mercado Pago deduplica por esta cabecera: un reintento de red
                 # no vuelve a cobrar.
-                headers={"X-Idempotency-Key": idempotency_key or reference},
+                headers={
+                    "Authorization": "Bearer " + self._token,
+                    "X-Idempotency-Key": idempotency_key or reference,
+                },
             )
             respuesta.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -112,6 +110,7 @@ class MercadoPagoGateway:
         *,
         provider_payment_id: str,
         amount_minor: int | None = None,
+        currency: str = "EUR",
         reason: str | None = None,
         idempotency_key: str | None = None,
     ) -> GatewayCharge:
@@ -122,8 +121,11 @@ class MercadoPagoGateway:
         try:
             respuesta = await cliente.post(
                 f"/v1/payments/{provider_payment_id}/refunds",
-                json={} if amount_minor is None else {"amount": amount_minor / 100},
+                json={}
+                if amount_minor is None
+                else {"amount": self._a_decimal(amount_minor, currency)},
                 headers={
+                    "Authorization": "Bearer " + self._token,
                     "X-Idempotency-Key": idempotency_key or f"refund-{provider_payment_id}"
                 },
             )
@@ -171,7 +173,13 @@ class MercadoPagoGateway:
 
         # La tolerancia temporal evita que un aviso capturado se reproduzca.
         tolerancia = self._settings.webhook_signature_tolerance_seconds
-        if abs(time.time() - int(ts)) > tolerancia:
+        try:
+            timestamp = int(ts)
+        except ValueError as exc:
+            raise WebhookVerificationError(
+                "Marca de tiempo inválida en x-signature."
+            ) from exc
+        if abs(time.time() - timestamp) > tolerancia:
             raise WebhookVerificationError("La firma del webhook ha caducado.")
 
         try:

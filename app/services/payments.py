@@ -21,6 +21,8 @@ from app.db.models.usage import UsageKind
 from app.schemas.enums import PaymentMethod, PaymentStatus, RiskDecision
 from app.schemas.payment import PaymentCreate
 from app.services.fraud import FraudContext, FraudEngine, fraud_engine
+from app.services.gateway import PaymentGatewayProtocol
+from app.services.mercadopago_gateway import MercadoPagoGateway, mercadopago_gateway
 from app.services.notifications import NotificationService
 from app.services.stripe_gateway import StripeGateway, stripe_gateway
 from app.services.usage import UsageService
@@ -38,7 +40,7 @@ class PaymentService:
         *,
         merchant: Merchant,
         engine: FraudEngine | None = None,
-        gateway: StripeGateway | None = None,
+        gateway: PaymentGatewayProtocol | None = None,
         config: Settings | None = None,
     ) -> None:
         self._session = session
@@ -47,7 +49,7 @@ class PaymentService:
         # producción con los datos de otro cliente ya servidos.
         self._merchant = merchant
         self._engine = engine or fraud_engine
-        self._gateway = gateway or stripe_gateway
+        self._gateway_override = gateway
         self._settings = config or default_settings
 
     # --- Contexto de riesgo -------------------------------------------------
@@ -117,6 +119,7 @@ class PaymentService:
             customer_id=data.customer_id,
             amount_minor=data.amount_minor,
             currency=data.currency,
+            provider=data.provider,
             method=data.method,
             email=data.email,
             ip_address=data.ip_address,
@@ -195,12 +198,13 @@ class PaymentService:
     async def _authorize(self, payment: Payment) -> None:
         """Envía el cobro a la pasarela y refleja el resultado en el pago."""
         try:
-            charge = await self._gateway.create_payment_intent(
+            charge = await self._gateway_for(payment.provider).create_payment_intent(
                 amount_minor=payment.amount_minor,
                 currency=payment.currency,
                 reference=payment.reference,
                 customer_id=payment.customer_id,
                 idempotency_key=payment.idempotency_key,
+                metadata={"merchant_id": str(payment.merchant_id)},
             )
         except GatewayError as exc:
             # El pago queda como fallido y auditable en vez de perderse: el
@@ -341,9 +345,10 @@ class PaymentService:
             raise ConflictError("El pago no tiene identificador en la pasarela.")
 
         try:
-            resultado = await self._gateway.refund(
+            resultado = await self._gateway_for(payment.provider).refund(
                 provider_payment_id=payment.provider_payment_id,
                 amount_minor=operation.amount_minor,
+                currency=payment.currency,
                 reason=operation.reason,
                 idempotency_key=hashlib.sha256(
                     f"{self._merchant.id}:{idempotency_key}".encode()
@@ -522,3 +527,14 @@ class PaymentService:
             RiskDecision.REVIEW: PaymentStatus.UNDER_REVIEW,
             RiskDecision.REJECT: PaymentStatus.REJECTED,
         }[decision]
+
+    def _gateway_for(self, provider: str) -> PaymentGatewayProtocol:
+        if self._gateway_override is not None:
+            return self._gateway_override
+        if provider == "mercadopago":
+            if self._settings is default_settings:
+                return mercadopago_gateway
+            return MercadoPagoGateway(self._settings)
+        if self._settings is default_settings:
+            return stripe_gateway
+        return StripeGateway(self._settings)

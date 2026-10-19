@@ -86,6 +86,7 @@ async def test_el_cobro_viaja_con_clave_de_idempotencia():
     )
 
     peticion = api.peticiones[0]
+    assert peticion.headers["Authorization"] == "Bearer TEST-token"
     assert peticion.headers["X-Idempotency-Key"] == "pedido-7"
     assert str(peticion.url).endswith("/v1/payments")
     assert cobro.provider_payment_id == "112233"
@@ -103,6 +104,7 @@ async def test_el_importe_viaja_en_decimal_no_en_centimos():
     )
     enviado = json.loads(api.peticiones[0].content)
     assert enviado["transaction_amount"] == 1284.50
+    assert enviado["currency_id"] == "EUR"
 
 
 async def test_las_divisas_sin_decimales_no_se_dividen():
@@ -115,6 +117,20 @@ async def test_las_divisas_sin_decimales_no_se_dividen():
         amount_minor=50_000, currency="CLP", reference="pay_1", customer_id="c1"
     )
     assert json.loads(api.peticiones[0].content)["transaction_amount"] == 50_000
+
+
+async def test_la_devolucion_usa_el_exponente_de_la_divisa():
+    api = ApiFalsa()
+    gateway = MercadoPagoGateway(
+        ajustes_con(mercadopago_access_token="TEST-token"), client=api.cliente()
+    )
+    await gateway.refund(
+        provider_payment_id="mp-1",
+        amount_minor=50_000,
+        currency="CLP",
+        idempotency_key="refund-clp-1",
+    )
+    assert json.loads(api.peticiones[0].content)["amount"] == 50_000
 
 
 async def test_un_error_del_proveedor_se_traduce_al_dominio():
@@ -156,6 +172,15 @@ def test_una_firma_caducada_se_rechaza():
     antigua = int(time.time()) - 3_600
     with pytest.raises(WebhookVerificationError, match="caducado"):
         MercadoPagoGateway(ajustes_mp()).verify_webhook(cuerpo, firmar_mp(cuerpo, ts=antigua))
+
+
+def test_una_marca_de_tiempo_no_numerica_se_rechaza_con_error_de_firma():
+    cuerpo = b'{"id":1}'
+    ts = "no-numerica"
+    mac = hmac.new(SECRETO.encode(), f"{ts}.{cuerpo.decode()}".encode(), hashlib.sha256)
+    firma = f"ts={ts},v1={mac.hexdigest()}"
+    with pytest.raises(WebhookVerificationError, match="Marca de tiempo inválida"):
+        MercadoPagoGateway(ajustes_mp()).verify_webhook(cuerpo, firma)
 
 
 def test_sin_secreto_configurado_no_se_acepta_nada():
@@ -217,6 +242,31 @@ async def test_la_ruta_unificada_rechaza_firmas_invalidas(client, monkeypatch):
     )
     assert respuesta.status_code == 400
     assert respuesta.json()["code"] == "invalid_signature"
+
+
+async def test_un_pago_puede_seleccionar_mercado_pago(client, session):
+    from sqlalchemy import select
+
+    from app.db.models import Payment
+    from tests.conftest import AUTH_HEADERS
+
+    response = await client.post(
+        "/api/v1/payments",
+        json={
+            "customer_id": "cliente-mp",
+            "amount_minor": 12_500,
+            "currency": "COP",
+            "provider": "mercadopago",
+        },
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 201
+    assert response.json()["provider"] == "mercadopago"
+    assert response.json()["provider_payment_id"].startswith("mp_sim_")
+    payment = await session.scalar(
+        select(Payment).where(Payment.reference == response.json()["reference"])
+    )
+    assert payment.provider == "mercadopago"
 
 
 async def test_un_proveedor_desconocido_es_404(client):

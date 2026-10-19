@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
@@ -24,6 +24,7 @@ class PaymentCreate(BaseModel):
     amount_minor: int = Field(gt=0, le=10**12, description="Importe en unidades mínimas.")
     currency: CurrencyStr
     method: PaymentMethod = PaymentMethod.CARD
+    provider: Literal["stripe", "mercadopago"] = "stripe"
 
     email: EmailStr | None = None
     ip_address: str | None = Field(default=None, max_length=45)

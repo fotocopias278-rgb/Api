@@ -272,6 +272,50 @@ async def test_devolucion_exige_clave_de_idempotencia(client, session):
     assert response.status_code == 422
 
 
+async def test_devolucion_usa_la_pasarela_guardada_en_el_pago(
+    session, merchant, monkeypatch
+):
+    import app.services.payments as payments_module
+    from app.core.config import settings as default_settings
+    from app.schemas.enums import PaymentMethod
+
+    class GatewayMercadoPago:
+        def __init__(self):
+            self.arguments = None
+
+        async def refund(self, **kwargs):
+            self.arguments = kwargs
+            return GatewayCharge(
+                provider_payment_id=kwargs["provider_payment_id"],
+                status="refunded",
+                raw={"id": "refund-mp-1"},
+            )
+
+    gateway = GatewayMercadoPago()
+    monkeypatch.setattr(payments_module, "mercadopago_gateway", gateway)
+    payment = Payment(
+        merchant_id=merchant.id,
+        reference="pay_mp_refund",
+        customer_id="cliente-mp",
+        amount_minor=5_000,
+        currency="COP",
+        provider="mercadopago",
+        provider_payment_id="mp-payment-1",
+        method=PaymentMethod.CARD,
+        status=PaymentStatus.SUCCEEDED,
+    )
+    session.add(payment)
+    await session.commit()
+
+    result = await PaymentService(
+        session, merchant=merchant, config=default_settings
+    ).refund("pay_mp_refund", amount_minor=2_000, idempotency_key="refund-mp-1")
+
+    assert result.status is PaymentStatus.PARTIALLY_REFUNDED
+    assert gateway.arguments["provider_payment_id"] == "mp-payment-1"
+    assert gateway.arguments["currency"] == "COP"
+
+
 async def test_devolucion_fallida_libera_la_reserva_y_no_reutiliza_la_clave(
     client, session, merchant, settings
 ):

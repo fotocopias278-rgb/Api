@@ -10,10 +10,12 @@ from typing import Any
 
 from celery.exceptions import MaxRetriesExceededError
 from celery.signals import worker_process_shutdown
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
-from app.db.models import Merchant, Receipt
+from app.db.models import Merchant, Payment, Receipt
 from app.db.models.endpoint import WebhookDelivery, WebhookEndpoint
 from app.db.session import SessionFactory, engine
 from app.schemas.enums import ReceiptStatus
@@ -166,6 +168,40 @@ def deliver_webhook_task(self: Any, delivery_id: str) -> None:
 @celery_app.task(name="webhooks.requeue_stale")
 def requeue_stale_webhooks_task() -> int:
     return _run_async(_requeue_stale_webhooks())
+
+
+@celery_app.task(name="privacy.anonymize_expired")
+def anonymize_expired_payment_data_task() -> int:
+    """Elimina datos personales de pagos que superan su periodo de retención."""
+    return _run_async(_anonymize_expired_payment_data(settings.data_retention_days))
+
+
+async def _anonymize_expired_payment_data(retention_days: int) -> int:
+    async with SessionFactory() as session:
+        return await _anonymize_expired_payment_data_in_session(
+            session, retention_days
+        )
+
+
+async def _anonymize_expired_payment_data_in_session(
+    session: AsyncSession, retention_days: int, *, now: datetime | None = None
+) -> int:
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
+    result = await session.execute(
+        update(Payment)
+        .where(
+            Payment.created_at < cutoff,
+            or_(Payment.email.is_not(None), Payment.ip_address.is_not(None)),
+        )
+        .values(email=None, ip_address=None)
+    )
+    await session.commit()
+    count = result.rowcount or 0
+    logger.info(
+        "privacy.expired_payment_data_anonymized",
+        extra={"count": count, "retention_days": retention_days},
+    )
+    return count
 
 
 async def _requeue_stale_webhooks() -> int:

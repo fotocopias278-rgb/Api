@@ -1,0 +1,41 @@
+COMUNICADO DE ACTUALIZACION
+FinAI Gateway - Cierres finales de pagos, conciliacion y privacidad
+
+RESUMEN
+
+FinAI Gateway incorpora una nueva tanda de mejoras para ampliar la integracion
+de pagos y reforzar la operacion de la plataforma. Esta actualizacion mantiene
+Stripe como proveedor predeterminado y permite seleccionar Mercado Pago al
+crear un pago.
+
+PRINCIPALES NOVEDADES
+
+- Integracion seleccionable con Mercado Pago y reembolsos convertidos de acuerdo
+  con los decimales propios de cada moneda.
+- Verificacion mas robusta de la marca de tiempo en webhooks de Mercado Pago.
+- Informes de conciliacion por comercio y periodo, con conteos y discrepancias
+  consultables de forma aislada por cada comercio.
+- Nueva señal estadistica de fraude, determinista e interpretable, que aporta
+  20 puntos y no provoca por si sola una decision de revision o rechazo.
+- Tarea diaria de anonimización de email e IP en pagos vencidos, configurable
+  mediante DATA_RETENTION_DAYS (180 dias por defecto).
+- Contrato OpenAPI y documentacion de arquitectura, datos, seguridad y decisiones
+  tecnicas en la carpeta docs/.
+
+VALIDACION
+
+Ruff y las pruebas focalizadas pasan. Tambien pasan las pruebas disponibles de
+la suite completa, excluyendo localmente los casos que requieren Lua/Redis y
+Moto/S3, dependencias que no se pudieron preparar en este entorno. La comprobacion
+de Alembic contra una base activa no pudo completarse desde este equipo.
+
+ESTADO Y RECOMENDACION
+
+Esta actualizacion debe tratarse como preliminar hasta que la ejecucion de CI
+valide la suite completa y las migraciones en los servicios previstos. Antes de
+procesar pagos reales, confirmar credenciales y webhooks de Sandbox, almacenamiento
+S3 persistente, worker Celery y Celery Beat activos, copias de seguridad y las
+reglas de retencion aplicables al negocio.
+
+La tarea de privacidad incluida anonimiza email e IP de pagos; no elimina archivos
+de comprobantes ni establece por si sola una politica legal completa de retencion.

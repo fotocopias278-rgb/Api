@@ -6,7 +6,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.schemas.enums import RiskDecision
-from app.services.fraud import FraudContext, FraudEngine
+from app.services.fraud import AnomalyScorer, FraudContext, FraudEngine
 
 MEDIODIA = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -110,3 +110,31 @@ def test_umbral_de_revision(engine):
     result = engine.evaluate(contexto(amount_minor=600_000, payments_last_hour=6))
     assert settings.fraud_review_threshold <= result.score < settings.fraud_reject_threshold
     assert result.decision is RiskDecision.REVIEW
+
+
+def test_anomaly_scorer_detecta_combinacion_estadistica_de_forma_determinista():
+    anomaly = contexto(
+        amount_minor=50_000,
+        average_amount_minor=1_000,
+        payments_last_hour=3,
+        failed_payments_last_day=2,
+    )
+    scorer = AnomalyScorer()
+    assert scorer.evaluate(anomaly) is True
+    assert scorer.evaluate(anomaly) is True
+    assert scorer.evaluate(contexto()) is False
+
+
+def test_senal_estadistica_tiene_peso_limitado_y_no_decide_por_si_sola():
+    anomaly = contexto(
+        amount_minor=50_000,
+        average_amount_minor=1_000,
+        payments_last_hour=3,
+        failed_payments_last_day=2,
+    )
+    result = FraudEngine(get_settings(), rules=()).evaluate(anomaly)
+    assert [(signal.code, signal.weight) for signal in result.signals] == [
+        ("STATISTICAL_ANOMALY", 20)
+    ]
+    assert result.score == 20
+    assert result.decision is RiskDecision.APPROVE

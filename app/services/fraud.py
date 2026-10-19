@@ -55,6 +55,28 @@ class Rule:
     predicate: Callable[[FraudContext, Settings], bool]
 
 
+class AnomalyScorer:
+    """Detecta combinaciones estadísticas sin hacer decisiones por sí solo."""
+
+    SIGNAL_CODE = "STATISTICAL_ANOMALY"
+    SIGNAL_WEIGHT = 20
+    SIGNAL_DESCRIPTION = (
+        "Combinación atípica de importe, velocidad, intentos fallidos y tarjetas."
+    )
+
+    def evaluate(self, ctx: FraudContext) -> bool:
+        amount_is_outlier = bool(
+            ctx.average_amount_minor
+            and ctx.amount_minor >= ctx.average_amount_minor * 5
+        )
+        correlated_velocity = ctx.payments_last_hour >= 3
+        correlated_failures = ctx.failed_payments_last_day >= 2
+        correlated_cards = ctx.distinct_cards_last_day >= 2
+        return (
+            amount_is_outlier and (correlated_velocity or correlated_failures or correlated_cards)
+        ) or (correlated_velocity and correlated_failures and correlated_cards)
+
+
 def _high_amount(ctx: FraudContext, cfg: Settings) -> bool:
     return ctx.amount_minor >= cfg.fraud_high_amount_minor
 
@@ -143,21 +165,31 @@ class FraudEngine:
     def __init__(self, config: Settings | None = None, rules: Iterable[Rule] | None = None) -> None:
         self._settings = config or default_settings
         self._rules = tuple(rules) if rules is not None else RULES
+        self._anomaly_scorer = AnomalyScorer()
 
     def evaluate(self, ctx: FraudContext) -> FraudEvaluationResponse:
         triggered = [rule for rule in self._rules if rule.predicate(ctx, self._settings)]
+        signals = [
+            FraudSignalRead(code=r.code, description=r.description, weight=r.weight)
+            for r in triggered
+        ]
+        if self._anomaly_scorer.evaluate(ctx):
+            signals.append(
+                FraudSignalRead(
+                    code=AnomalyScorer.SIGNAL_CODE,
+                    description=AnomalyScorer.SIGNAL_DESCRIPTION,
+                    weight=AnomalyScorer.SIGNAL_WEIGHT,
+                )
+            )
         # La puntuación se satura en 100: sumar más señales no hace la decisión
         # "más rechazable", y un techo estable mantiene los umbrales legibles.
-        score = min(100, sum(rule.weight for rule in triggered))
+        score = min(100, sum(signal.weight for signal in signals))
 
         return FraudEvaluationResponse(
             score=score,
             decision=self._decide(score),
             engine_version=self.VERSION,
-            signals=[
-                FraudSignalRead(code=r.code, description=r.description, weight=r.weight)
-                for r in triggered
-            ],
+            signals=signals,
         )
 
     def evaluate_signals(self, codes: Iterable[str]) -> FraudEvaluationResponse:

@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     health,
     payments,
     receipts,
+    reconciliation,
     usage,
     webhooks,
 )
@@ -21,4 +22,5 @@ api_router.include_router(endpoints.router)
 api_router.include_router(payments.router)
 api_router.include_router(fraud.router)
 api_router.include_router(receipts.router)
+api_router.include_router(reconciliation.router)
 api_router.include_router(webhooks.router)
