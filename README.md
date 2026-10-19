@@ -202,6 +202,9 @@ verifica — sin el script, 50 de 50 peticiones se cuelan; con él, exactamente 
   registra el fallo; quedarse sin contador es malo, pero tumbar toda la pasarela
   porque el contador está caído lo es más. Con `RATE_LIMIT_FAIL_OPEN=false` se
   invierte el criterio.
+- `/api/v1/health/ready` no se limita y devuelve `503` si la base de datos o
+  Redis no responden (cuando el limitador está activo), aunque `fail-open`
+  permita que la API siga atendiendo tráfico sin Redis.
 
 ---
 

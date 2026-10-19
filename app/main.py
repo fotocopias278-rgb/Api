@@ -31,6 +31,15 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # limitarlas provocaría reinicios en cascada justo cuando hay carga.
 RATE_LIMIT_EXEMPT = ("/api/v1/health", "/docs", "/redoc", "/openapi.json")
 
+
+def is_rate_limit_exempt(path: str) -> bool:
+    """Exime las rutas de salud y documentación sin permitir colisiones de prefijo."""
+    return any(
+        path == prefix or (prefix == "/api/v1/health" and path.startswith(f"{prefix}/"))
+        for prefix in RATE_LIMIT_EXEMPT
+    )
+
+
 # Coste en fichas por endpoint. Un cobro o una extracción con IA valen mucho más
 # que una consulta, así que vacían el cubo antes.
 ROUTE_COSTS: tuple[tuple[str, str, int], ...] = (
@@ -127,7 +136,7 @@ def _register_middleware(app: FastAPI) -> None:
         limiter: RateLimiter | None = getattr(request.app.state, "rate_limiter", None)
         path = request.url.path
 
-        if limiter is None or not limiter.enabled or path.startswith(RATE_LIMIT_EXEMPT):
+        if limiter is None or not limiter.enabled or is_rate_limit_exempt(path):
             return await call_next(request)
 
         identity = identity_from(

@@ -49,8 +49,6 @@ async def readiness(
             checks["redis"] = "ok"
         except Exception as exc:
             logger.warning("health.redis_unavailable", extra={"error": str(exc)})
-            # Con `fail_open` la API sigue sirviendo sin limitador: se degrada,
-            # no se cae, y por eso no marca la sonda como no lista.
             checks["redis"] = "error"
 
     checks["stripe"] = "configured" if settings.stripe_api_key else "simulated"
@@ -62,7 +60,7 @@ async def readiness(
         "stub" if isinstance(proveedor, StubVisionProvider) else "configured"
     )
 
-    healthy = checks["database"] == "ok"
+    healthy = checks["database"] == "ok" and checks["redis"] in {"ok", "disabled"}
     if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 

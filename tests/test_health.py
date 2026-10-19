@@ -11,9 +11,11 @@ async def test_liveness_no_requiere_autenticacion(client):
 
 async def test_readiness_comprueba_la_base_de_datos(client):
     response = await client.get("/api/v1/health/ready")
-    assert response.status_code == 200
+    # El cliente de esta prueba no configura Redis y el limitador está activo.
+    assert response.status_code == 503
     body = response.json()
     assert body["checks"]["database"] == "ok"
+    assert body["checks"]["redis"] == "unavailable"
     # Sin credenciales configuradas los integradores externos van en modo simulado.
     assert body["checks"]["stripe"] == "simulated"
     assert body["checks"]["vision"] == "stub"

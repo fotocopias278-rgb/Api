@@ -1,7 +1,16 @@
 """Limitación de tasa vista desde HTTP."""
 
+from app.main import is_rate_limit_exempt
 from tests.conftest import AUTH_HEADERS
 from tests.conftest import AUTH_HEADERS_OTRO as OTRA_CLAVE
+
+
+def test_solo_se_eximen_sondas_y_rutas_de_documentacion():
+    assert is_rate_limit_exempt("/api/v1/health")
+    assert is_rate_limit_exempt("/api/v1/health/ready")
+    assert not is_rate_limit_exempt("/api/v1/healthy")
+    assert is_rate_limit_exempt("/docs")
+    assert not is_rate_limit_exempt("/docs-malicioso")
 
 
 async def test_las_respuestas_informan_del_cupo(client_limitado):
