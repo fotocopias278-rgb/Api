@@ -10,3 +10,4 @@ ruff>=0.7.0
 # Limitación de tasa: Redis simulado cuando no hay binario disponible
 fakeredis>=2.37.0
 lupa>=2.0
+moto[server]>=5.0.0
